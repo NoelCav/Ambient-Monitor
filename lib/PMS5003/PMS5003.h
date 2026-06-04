@@ -9,6 +9,17 @@ public:
         uint16_t pm10;
     };
 
+    struct DebugStats {
+        uint32_t bytesReceived;
+        uint32_t framesDecoded;
+        uint32_t checksumFailures;
+        uint32_t headerSkips;
+        uint32_t headerMatches;
+        uint32_t bufferBytes;
+        uint8_t firstBytes[16];
+        uint8_t firstBytesLen;
+    };
+
     PMS5003();
     ~PMS5003();
 
@@ -25,15 +36,18 @@ public:
     bool available();
     // Read latest complete frame into data. Returns true on success.
     bool read(Data* out);
+    // Get parser/debug stats and reset counters for next sample interval
+    DebugStats getDebugStats();
 
 private:
     HardwareSerial* _serial = nullptr;
     int _setPin = -1;
     Stream* _stream = nullptr;
-    static const int BUF_SIZE = 32;
+    static const int BUF_SIZE = 256;
     uint8_t _buf[BUF_SIZE];
     int _buf_pos = 0;
     volatile bool _has_data = false;
     Data _latest{};
+    DebugStats _debug;
     void processBuffer();
 };
