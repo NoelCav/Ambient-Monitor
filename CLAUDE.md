@@ -26,7 +26,7 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 
 ## Runtime params (web config portal)
 - Stored in NVS (`Preferences` namespace `ambient`); loaded once at boot, **applied on reboot**.
-- Edit by browsing to `http://<device_id>.local` (mDNS, advertised once on WiFi) or the device IP (printed at boot as a fallback). If WiFi can't be joined, the device hosts a SoftAP `AmbientMonitor-setup` (see `AP_SSID`/`AP_PASSWORD` in `config.h`) serving the same form.
+- Edit by browsing to `http://<device_id>.local` (mDNS, advertised once on WiFi) or the device IP (printed at boot as a fallback). If WiFi can't be joined, the device hosts a SoftAP `AmbientMonitor-setup` (`AP_SSID` in `config.h`, `AP_PASSWORD` in `secrets.h`) serving the same form.
 - The portal root also shows a live, auto-refreshing reading panel (env/sound/light/PM with levels), backed by `GET /status.json`.
 - Params: `device_id`, `wifi_ssid`/`wifi_password`, `upload_enabled`, `sample_interval_s`, `batch_size`. Defaults come from `DEFAULT_*` in `config.h` and `WIFI_SSID`/`WIFI_PASSWORD` in `secrets.h`.
 - `upload_enabled=false` → serial-only mode: WiFi/portal and the offline buffer stay active, but nothing is sent to Firestore.
@@ -50,7 +50,7 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 - **Firebase project:** `ambient-monitor-f9e46` (API key and project ID in `config.h`)
 
 ## Credentials
-- **`secrets.h`** (gitignored): `WIFI_SSID`, `WIFI_PASSWORD`, `FIREBASE_DEVICE_EMAIL`, `FIREBASE_DEVICE_PASSWORD`
+- **`secrets.h`** (gitignored): `WIFI_SSID`, `WIFI_PASSWORD`, `FIREBASE_DEVICE_EMAIL`, `FIREBASE_DEVICE_PASSWORD`, `AP_PASSWORD`
 - **`config.h`** (committed): `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`, `DEVICE_ID` — these are public values
 
 ## PMS5003 power management

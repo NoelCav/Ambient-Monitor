@@ -94,6 +94,7 @@
 #ifndef AP_SSID
 #define AP_SSID "AmbientMonitor-setup"
 #endif
+// AP_PASSWORD comes from secrets.h so the published repo doesn't reveal it
 #ifndef AP_PASSWORD
-#define AP_PASSWORD "ambient123"  // min 8 chars; change as desired
+#error "Define AP_PASSWORD (min 8 chars) in src/secrets.h"
 #endif
