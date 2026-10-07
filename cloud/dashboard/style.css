@@ -1,0 +1,175 @@
+/* ══════════════════════════════════════════
+   Theme tokens — "datasheet": paper + ink, one link blue.
+   Dark mode inverts to ink paper.
+   ══════════════════════════════════════════ */
+
+:root {
+  --bg:        #fbfbf8;
+  --bg-card:   #f0efe8;
+  --fg:        #1a1a1a;
+  --fg-dim:    #5b5a55;
+  --accent:    #1d4ed8;
+  --on-accent: #ffffff;
+  --border:    #c9c7bd;
+  --rule:      #1a1a1a;
+  --ok:        #15803d;
+  --error:     #b91c1c;
+  --radius:    2px;
+
+  --f-sans: 'Archivo', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #141413;
+    --bg-card:   #1f1f1d;
+    --fg:        #ecebe4;
+    --fg-dim:    #a3a197;
+    --accent:    #8fb0ff;
+    --on-accent: #10131a;
+    --border:    #3d3c37;
+    --rule:      #ecebe4;
+    --ok:        #4ade80;
+    --error:     #f87171;
+    color-scheme: dark;
+  }
+}
+
+
+/* ══════════════════════════════════════════
+   Reset & base
+   ══════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--f-sans);
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.6;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+::selection { background: var(--fg); color: var(--bg); }
+
+/* ═══════════════════════════════════════════════
+   Dashboard
+   ═══════════════════════════════════════════════ */
+
+.dash-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.dash-header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: lowercase;
+}
+
+.last-updated {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+}
+
+.range-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.range-buttons button {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.range-buttons button:hover {
+  background: var(--border);
+}
+
+.range-buttons button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.chart-wrap {
+  margin-bottom: 1.5rem;
+}
+
+.doc-count {
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+  margin-bottom: 2rem;
+}
+
+.dash-footer {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  padding: 1rem 0;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Password gate ── */
+
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+}
+
+.gate form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: min(320px, 90vw);
+}
+
+.gate input[type="password"] {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 6px;
+  font-size: 1rem;
+  outline: none;
+}
+
+.gate input[type="password"]:focus {
+  border-color: var(--accent);
+}
+
+.gate button[type="submit"] {
+  padding: 0.6rem;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.gate .error {
+  font-size: 0.8rem;
+  color: var(--error);
+  min-height: 1em;
+}
