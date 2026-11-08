@@ -87,7 +87,7 @@ static void printLogStats() {
 static void printStatus() {
     SamplerState s = samplerState();
     DustStatus d = dustStatus();
-    Console.printf("uptime %lu s, reset: %s, heap %u KB, firmware %s (%s %s)\n", millis() / 1000,
+    Console.printf("uptime %lu s, reset: %s, heap %u KB, firmware %s (build %s)\n", millis() / 1000,
         resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024), firmwareState(), buildTime());
     Console.printf("wifi: %s, ip %s, rssi %d dBm\n", wifiConnected() ? "connected" : "disconnected",
         WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
