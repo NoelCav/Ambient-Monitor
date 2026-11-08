@@ -1,5 +1,5 @@
 # Publishes the dashboard (web/index.html + common.css/common.js + config.js)
-# to GitHub Pages: https://noelcav.github.io/Ambient-Monitor/
+# to GitHub Pages: https://www.noelcaverly.com/Ambient-Monitor/ (also /monitor/)
 # One-time: repo Settings -> Pages -> Source: "GitHub Actions".
 # web/device.html is the monitor's own page (embedded in the firmware), so it
 # isn't published.

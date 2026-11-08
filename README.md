@@ -11,7 +11,7 @@ pio run -e ota -t upload               # same, to esp32-ambient-01.local by name
 pio test -e native                     # host unit tests
 ```
 
-Then open `http://esp32-ambient-01.local` (or the `AmbientMonitor-setup` WiFi network at 192.168.4.1 if it can't join your WiFi). Developer notes, architecture and sensor findings are in `CLAUDE.md`.
+The dashboard for all monitors is at https://www.noelcaverly.com/Ambient-Monitor/. A monitor's own page is at `http://esp32-ambient-01.local` (or the `AmbientMonitor-setup` WiFi network at 192.168.4.1 if it can't join your WiFi). Developer notes, architecture and sensor findings are in `CLAUDE.md`.
 
 ## 🔌 Hardware Architecture & Wiring
 
