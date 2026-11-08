@@ -34,6 +34,7 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 | `src/climate.h/.cpp` | BME280: forced-mode read with reset-value check, boot diagnostics, `diag climate`, I2C scan |
 | `src/dust.h/.cpp` | Dust task: frame decode, 10-frame average, power, frame counters |
 | `src/soundlight.h/.cpp` | Sound/light task: continuous ADC, 125 ms windows, per-span stats |
+| `src/led.h/.cpp` | Status LED task (colour, dimming and patterns documented in led.h) |
 | `src/status.h/.cpp` | `/status.json` (shape documented in status.h) |
 | `src/data_log.h/.cpp` | Persistent CSV log, saved logs, archives (mutex-guarded) |
 | `src/commands.h/.cpp` | Console commands (help text is the reference) |
