@@ -1,0 +1,58 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ambient Monitors</title>
+<link rel="stylesheet" href="common.css">
+<script src="common.js"></script>
+<script src="config.js"></script>
+<style>
+/* Dashboard only; shared styles are in common.css. */
+body{max-width:980px}
+.mons{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:0 28px}
+.seg{display:flex;gap:8px;margin-top:10px}.seg button{margin:0;flex:1;padding:10px 4px}
+</style></head><body>
+<h1>Ambient Monitors</h1><div class="sub" id="sub">loading&hellip;</div>
+
+<div class="sec" onclick="tog('now')">Now<span class="pm" id="pm-now"></span></div>
+<div id="now"></div>
+
+<div class="sec" onclick="tog('hist')">History<span class="pm" id="pm-hist"></span></div>
+<div id="hist"><div class="seg" id="ranges"></div><div id="charts"></div></div>
+
+<script>
+// Readings uploaded by every monitor to the Google Sheet (cloud/README.md),
+// fetched from its Apps Script web app (DATA_URL in config.js). Tiles,
+// colours and charts come from common.js, the same as the device's own page.
+var RANGES=[['24 hours',86400],['7 days',604800],['30 days',2592000],['1 year',31536000]];
+var STALE_S=1800;  // no data for 30 min: probably off or offline
+var range=86400,R10={};
+try{range=+localStorage.getItem('dash-range')||range}catch(e){}
+sections({now:1,hist:1},'dash-open',function(k){if(k=="hist")loadHistory()});
+
+function api(q){return fetch(DATA_URL+'?'+q).then(function(r){return r.json()})}
+// The web app answers {columns, rows: [[...]], r10}; turn rows into objects keyed by column.
+function rowsOf(j){R10=j.r10||R10;return j.rows.map(function(a){var o={};
+ j.columns.forEach(function(c,i){o[c]=a[i]===''?NaN:a[i]});return o})}
+
+function now(){api('latest=1').then(function(j){
+ var rows=rowsOf(j).sort(function(a,b){return a.device_id<b.device_id?-1:1}),t=Date.now()/1000;
+ $('now').innerHTML=rows.length?'<div class="mons">'+rows.map(function(r){var age=t-r.epoch;
+  return '<div><h3>'+esc(r.device_id)+' &middot; '+(age>STALE_S?'<span style="color:'+YEL+'">no data for '+dur(age)+'</span>':dur(age)+' ago')+'</h3>'+
+   readings(rowReading(r,R10[r.device_id]),'No reading')+'</div>'}).join('')+'</div>':'<div class="muted">No readings uploaded yet.</div>';
+ set('sub',rows.length+' monitor'+(rows.length==1?'':'s')+' · updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}));
+}).catch(function(){set('sub','Could not reach the data source.')})}
+
+function setRange(s){range=s;try{localStorage.setItem('dash-range',s)}catch(e){}drawRanges();loadHistory()}
+function drawRanges(){$('ranges').innerHTML=RANGES.map(function(r){
+ return '<button type="button"'+(r[1]==range?' class="sel"':'')+' onclick="setRange('+r[1]+')">'+r[0]+'</button>'}).join('')}
+// 24 h and 7 days use every 10-min reading; longer ranges use the hourly averages.
+function loadHistory(){var to=Math.floor(Date.now()/1000),hourly=range>604800;
+ $('charts').innerHTML='<div class="muted">Loading…</div>';
+ api('from='+(to-range)+'&to='+to+(hourly?'&res=hour':'')).then(function(j){var by={};
+  rowsOf(j).forEach(function(r){(by[r.device_id]=by[r.device_id]||[]).push(r)});
+  var mons=Object.keys(by).sort().map(function(d){return {name:d,r10:R10[d],rows:by[d].sort(function(a,b){return a.epoch-b.epoch})}});
+  charts($('charts'),mons,hourly?'Hourly averages.':'')
+ }).catch(function(){$('charts').innerHTML='<div class="muted">Could not load the history.</div>'})}
+
+if(!DATA_URL){set('sub','No data source yet: set DATA_URL in config.js (see cloud/README.md).')}
+else{drawRanges();now();if(open.hist)loadHistory();setInterval(now,60000);setInterval(function(){if(open.hist)loadHistory()},600000)}
+</script></body></html>

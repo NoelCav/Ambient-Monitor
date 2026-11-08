@@ -1,7 +1,7 @@
 # Ambient Monitor — ESP32-S3
 
 ## Project overview
-Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 USB-serial). Reads BME280 (temp/humidity/pressure), PMS5003 (particulate matter), KY-037 (sound) and a photoresistor (light). Logs to a persistent on-device CSV and is debugged and updated entirely over WiFi (web portal, network console, OTA). No cloud backend: Firestore and the `cloud/` dashboard/rollup were removed on 2026-11-08 and are in git history if needed.
+Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 USB-serial). Reads BME280 (temp/humidity/pressure), PMS5003 (particulate matter), KY-037 (sound) and a photoresistor (light). Logs to a persistent on-device CSV and is debugged and updated entirely over WiFi (web portal, network console, OTA). Uploads to a Google Sheet (Apps Script web app, `cloud/`), and a dashboard for all monitors is served by this repo's GitHub Pages (`web/index.html`, https://noelcav.github.io/Ambient-Monitor/). The earlier Firestore backend was removed on 2026-11-08 (in git history).
 
 ## Build / flash
 - **PlatformIO**, Arduino framework (core 3.x), board `esp32-s3-devkitc-1`. CLI at `~/.platformio/penv/Scripts/pio.exe` on the user's desktop.
@@ -19,6 +19,7 @@ Tasks, all on core 1 (WiFi runs on core 0). Each sensor task owns its hardware b
 | soundlight | 5 | `soundlight.cpp` | ADC1 continuous DMA (sound GPIO4 + light GPIO6, 10 kHz each) |
 | dust | 4 | `dust.cpp` | PMS5003 UART (Serial1) + SET power pin |
 | sampler | 3 | `sampler.cpp` | schedule, dust power requests, readings, data log appends |
+| upload | 1 | `upload.cpp` | HTTPS uploads of new log rows to the Google Sheet (leaves the watchdog during a request) |
 | led | 2 | `led.cpp` | status RGB LED (GPIO 48): air-quality colour, room-light dimming, event patterns |
 | loopTask | 1 | `main.cpp` loop() | WiFi, OTA, web portal, console, commands |
 
@@ -40,7 +41,12 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 | `src/status.h/.cpp` | `/status.json` (shape documented in status.h) |
 | `src/data_log.h/.cpp` | Persistent CSV log, saved logs, archives (mutex-guarded) |
 | `src/commands.h/.cpp` | Console commands (help text is the reference) |
-| `src/config_portal.h/.cpp` | Web portal (single page, JS renders status.json) and log/download endpoints |
+| `src/config_portal.h/.cpp` | Web portal server: the page, /common.*, status/log/wifi JSON, downloads, /cmd |
+| `web/device.html` | The portal page (embedded into the firmware at build time by `scripts/embed_web.py` -> `src/web_assets.h`, generated) |
+| `web/common.css`, `web/common.js` | Shared by the portal and the dashboard: tiles, colour scales, lux/ALT-CF3 helpers, sections, multi-monitor charts |
+| `web/index.html`, `web/config.js` | Online dashboard (GitHub Pages via `.github/workflows/pages.yml`); `config.js` holds the Apps Script URL |
+| `src/upload.h/.cpp` | Upload task: sends new log rows to the Sheet |
+| `cloud/apps_script/Code.gs`, `cloud/README.md` | The Sheet's web app (append, JSON reads, nightly hourly rollup) and its setup steps |
 | `src/console.h/.cpp` | `Console` (a `Print`): Serial + 16 KB RAM backlog for `/console.txt` and TCP port 23 |
 | `src/config.h` | Pins, defaults, timing/measurement constants, log/console sizes, passwords |
 | `src/params.h/.cpp`, `src/health.h/.cpp`, `src/wifi_manager.h/.cpp` | NVS params, reset reason, WiFi/NTP/mDNS/OTA |

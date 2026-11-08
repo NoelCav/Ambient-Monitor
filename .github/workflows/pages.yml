@@ -1,0 +1,34 @@
+# Publishes the dashboard (web/index.html + common.css/common.js + config.js)
+# to GitHub Pages: https://noelcav.github.io/Ambient-Monitor/
+# One-time: repo Settings -> Pages -> Source: "GitHub Actions".
+# web/device.html is the monitor's own page (embedded in the firmware), so it
+# isn't published.
+name: Dashboard
+
+on:
+  push:
+    branches: [main]
+    paths: [web/**, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir _site && cp web/index.html web/common.css web/common.js web/config.js _site/
+      - uses: actions/upload-pages-artifact@v3
+      - id: deployment
+        uses: actions/deploy-pages@v4
