@@ -233,6 +233,9 @@ function render(d){
  t+=tile('Free memory',Math.round(s.heap/1024),'KB',s.heap<40000?['Low',YEL]:null);
  var low=s.tasks.filter(function(k){return k.stack_free<512});
  t+=tile('Task stacks',low.length?low.length+' low':'OK','',low.length?[low.map(function(k){return k.name}).join(', '),YEL]:[s.tasks.length+' tasks',null]);
+ var up=s.upload;
+ t+=tile('Upload',!up.on?'Off':up.error?'Failing':up.ok_s<0?'Waiting':dur(up.ok_s)+' ago','',
+  !up.on?['Not set up',null]:up.error?[up.error,RED]:[up.pending?up.pending+' rows waiting':'Up to date',null]);
  $('devb').innerHTML=grid(t);
 }
 function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
@@ -434,17 +437,6 @@ static void appendSaved(const String& name, size_t bytes, void* ctx) {
     String& j = *(String*)ctx;
     if (j.length() > 1) j += ",";
     j += "{\"name\":\"" + name + "\",\"kb\":" + String((bytes + 1023) / 1024) + "}";
-}
-
-// JSON string literal (SSIDs may contain quotes or backslashes).
-static String jsonStr(const String& s) {
-    String out = "\"";
-    for (unsigned i = 0; i < s.length(); i++) {
-        char c = s[i];
-        if (c == '"' || c == '\\') out += '\\';
-        if ((uint8_t)c >= 0x20) out += c;
-    }
-    return out + "\"";
 }
 
 // Saved WiFi networks (names only) and the current connection, for Settings.

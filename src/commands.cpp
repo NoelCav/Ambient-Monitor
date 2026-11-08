@@ -10,6 +10,7 @@
 #include "params.h"
 #include "sampler.h"
 #include "tasks.h"
+#include "upload.h"
 #include "wifi_manager.h"
 #include <WiFi.h>
 #include <time.h>
@@ -58,6 +59,14 @@ static const char* const HELP =
     "  a column change (firmware update) makes archive-columns-*. The oldest\n"
     "  archives are deleted if storage runs short.\n"
     "  Download: /log.csv, /saved.csv?name=<name>\n"
+    "\n"
+    "UPLOAD (to the Google Sheet; setup in cloud/README.md)\n"
+    "  upload                    status: last success, rows waiting, last error\n"
+    "  upload url <url>          the Apps Script web app URL (ends in /exec)\n"
+    "  upload key <key>          the script's UPLOAD_KEY\n"
+    "  upload on | upload off    start / stop uploading (saved)\n"
+    "  upload now                try now instead of waiting for the retry delay\n"
+    "  upload resend             send the whole log again (the Sheet skips rows it has)\n"
     "\n"
     "DISPLAY\n"
     "  led on | led off          status LED: colour = air quality, dims in the dark\n"
@@ -163,6 +172,33 @@ static void cmdWifi(const String& sub, const String& arg) {
     }
 }
 
+static void cmdUpload(const String& sub, const String& arg) {
+    Params p = params();
+    if (sub == "url" || sub == "key") {
+        String v = arg;
+        v.trim();
+        (sub == "url" ? p.uploadUrl : p.uploadKey) = v;
+        paramsSave(p);
+    } else if (sub == "on" || sub == "off") {
+        p.uploadOn = sub == "on";
+        paramsSave(p);
+    } else if (sub == "now") {
+        uploadNow();
+    } else if (sub == "resend") {
+        uploadResend();
+    } else if (sub != "") {
+        Console.println("upload what? url <url> | key <key> | on | off | now | resend");
+        return;
+    }
+    UploadStatus u = uploadStatus();
+    const Params& q = params();
+    Console.printf("upload %s; url %s; key %s\n", q.uploadOn ? "on" : "off",
+        q.uploadUrl.length() ? q.uploadUrl.c_str() : "(not set)", q.uploadKey.length() ? "set" : "(not set)");
+    if (u.lastOkMs) Console.printf("last success %lu s ago; ", (unsigned long)((millis() - u.lastOkMs) / 1000));
+    Console.printf("%u rows waiting; newest uploaded epoch %ld%s%s\n", (unsigned)u.pending, u.lastEpoch,
+        u.lastError.length() ? "; last error: " : "", u.lastError.c_str());
+}
+
 // One-point light calibration: make the current reading equal a measured lux.
 static void lightCal(const String& arg) {
     Params p = params();
@@ -252,13 +288,15 @@ void commandRun(const String& raw) {
     String line = raw;
     line.trim();
     if (!line.length()) return;
-    // Echo the command, but never a WiFi password.
+    // Echo the command, but never a WiFi password or the upload key.
     String shown = line, low = line;
     low.toLowerCase();
     if (low.startsWith("wifi add ")) {
         String ssid, pass;
         splitSsid(line.substring(9), ssid, pass);
         shown = "wifi add \"" + ssid + "\"" + (pass.length() ? " ********" : "");
+    } else if (low.startsWith("upload key ")) {
+        shown = "upload key ********";
     }
     Console.printf("> %s\n", shown.c_str());
 
@@ -295,6 +333,8 @@ void commandRun(const String& raw) {
         cmdLog(sub, arg);
     } else if (cmd == "wifi") {
         cmdWifi(sub, arg);
+    } else if (cmd == "upload") {
+        cmdUpload(sub, arg);
     } else if (cmd == "led") {
         if (sub == "on" || sub == "off") {
             Params p = params();

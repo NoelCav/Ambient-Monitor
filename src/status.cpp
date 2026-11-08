@@ -8,9 +8,20 @@
 #include "params.h"
 #include "sampler.h"
 #include "tasks.h"
+#include "upload.h"
 #include <WiFi.h>
 
 static const char* tf(bool b) { return b ? "true" : "false"; }
+
+String jsonStr(const String& s) {
+    String out = "\"";
+    for (unsigned i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '"' || c == '\\') out += '\\';
+        if ((uint8_t)c >= 0x20) out += c;
+    }
+    return out + "\"";
+}
 
 // The one serializer for a Reading (logged sample and test reading alike).
 // `extra` is appended inside the object (e.g. the test reading's diagnostics).
@@ -45,7 +56,11 @@ String statusJson() {
     j += ",\"test\":" + String(tf(params().testMode));
     j += ",\"sample_s\":" + String(params().sampleIntervalS);
     j += ",\"next_sample_s\":" + String(s.nextSampleS);
-    j += ",\"tasks\":" + tasksJson() + "}";
+    j += ",\"tasks\":" + tasksJson();
+    UploadStatus u = uploadStatus();
+    j += ",\"upload\":{\"on\":" + String(tf(u.configured)) + ",\"ok_s\":" +
+         String(u.lastOkMs ? (long)((millis() - u.lastOkMs) / 1000) : -1) + ",\"pending\":" + String(u.pending) +
+         ",\"error\":" + jsonStr(u.lastError) + "}}";
 
     j += ",\"hw\":{\"climate\":" + String(tf(climateFound())) + ",\"climate_addr\":" + String(climateAddr());
     j += ",\"dust_on\":" + String(tf(dust.on)) + ",\"dust_s\":" + String(dust.awakeMs / 1000);

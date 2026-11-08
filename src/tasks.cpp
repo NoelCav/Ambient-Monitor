@@ -30,6 +30,8 @@ void startTask(const char* name, void (*fn)(void*), uint32_t stackBytes, UBaseTy
 }
 
 void taskFeed() { esp_task_wdt_reset(); }
+void taskWatchdogPause() { esp_task_wdt_delete(nullptr); }
+void taskWatchdogResume() { esp_task_wdt_add(nullptr); }
 
 void watchdogBegin() {
     esp_task_wdt_config_t cfg = {

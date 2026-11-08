@@ -68,6 +68,7 @@
 #define ADC_SAMPLE_HZ 20000      // continuous ADC, shared by sound and light (10 kHz each)
 #define SOUND_WINDOW_MS 125      // sound RMS window ("fast" sound-meter time constant)
 #define WATCHDOG_S 30            // a task silent this long reboots the device
+#define UPLOAD_BATCH 40          // log rows per upload POST (~5 KB)
 #define HEALTHY_AFTER_S 60       // new firmware is marked good (no rollback) after this long healthy
 
 // --- Persistent data log (LittleFS, survives firmware uploads) ---

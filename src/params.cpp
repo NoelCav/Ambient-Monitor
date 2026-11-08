@@ -43,6 +43,9 @@ void paramsLoad() {
     g_params.testMode        = prefs.getBool("live_dbg", DEFAULT_TEST_MODE);  // key predates the name
     g_params.ledOn           = prefs.getBool("led", true);
     g_params.ldrR10          = prefs.getFloat("ldr_r10", LDR_R10_DEFAULT);
+    g_params.uploadOn        = prefs.getBool("up_on", false);
+    g_params.uploadUrl       = prefs.getString("up_url", "");
+    g_params.uploadKey       = prefs.getString("up_key", "");
     prefs.end();
 
     validate(g_params);
@@ -73,6 +76,9 @@ void paramsSave(const Params& in) {
     prefs.putBool("live_dbg", p.testMode);
     prefs.putBool("led", p.ledOn);
     prefs.putFloat("ldr_r10", p.ldrR10);
+    prefs.putBool("up_on", p.uploadOn);
+    prefs.putString("up_url", p.uploadUrl);
+    prefs.putString("up_key", p.uploadKey);
     // Keys from older firmware: the single WiFi network and the Firestore upload.
     for (const char* old : {"wifi_ssid", "wifi_pass", "upload_en", "batch"}) prefs.remove(old);
     prefs.end();

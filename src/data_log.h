@@ -42,3 +42,7 @@ struct DataLogStats {
 };
 DataLogStats dataLogStats();
 void dataLogPrintTail(size_t n);
+// Header + up to maxRows rows of log.csv stamped after `afterEpoch` (rows
+// without a clock time are skipped). Sets lastEpoch to the newest row taken
+// and pending to the number of such rows in total. "" if there are none.
+String dataLogRowsAfter(long afterEpoch, size_t maxRows, long& lastEpoch, size_t& pending);

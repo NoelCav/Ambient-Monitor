@@ -339,6 +339,29 @@ DataLogStats dataLogStats() {
     return s;
 }
 
+String dataLogRowsAfter(long afterEpoch, size_t maxRows, long& lastEpoch, size_t& pending) {
+    Guard g(mtx);
+    pending = 0;
+    lastEpoch = afterEpoch;
+    File f = mounted ? LittleFS.open(DATA_LOG_PATH, FILE_READ) : File();
+    if (!f) return "";
+    String out = f.readStringUntil('\n') + "\n", taken;
+    size_t n = 0;
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        long e = line.toInt();  // epoch is the first column; "" -> 0
+        if (e <= afterEpoch) continue;
+        pending++;
+        if (n < maxRows) {
+            taken += line + "\n";
+            lastEpoch = e;
+            n++;
+        }
+    }
+    f.close();
+    return n ? out + taken : "";
+}
+
 // Print the header and the last n rows of log.csv to the console.
 void dataLogPrintTail(size_t n) {
     Guard g(mtx);

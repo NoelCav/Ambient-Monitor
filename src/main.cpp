@@ -13,6 +13,7 @@
 #include "sampler.h"
 #include "soundlight.h"
 #include "tasks.h"
+#include "upload.h"
 #include "wifi_manager.h"
 
 void setup() {
@@ -27,6 +28,7 @@ void setup() {
     dustBegin();
     samplerBegin();
     ledBegin();
+    uploadBegin();
 
     wifiSetup();
     configPortalSetup();

@@ -1,0 +1,36 @@
+# cloud/: the Google Sheet data store
+
+Monitors upload their log rows to a Google Sheet through a small Apps Script web app (`apps_script/Code.gs`). The dashboard (`dashboard/`, served by GitHub Pages) reads them back from the same web app. It's free, has no expiry, and the data stays in your own Google Drive.
+
+## One-time setup (about 5 minutes)
+
+1. **Create the Sheet.** In Google Drive: New → Google Sheets. Name it e.g. "Ambient Monitor".
+2. **Add the script.** In the Sheet: Extensions → Apps Script. Replace the editor's contents with `apps_script/Code.gs` and save.
+3. **Set the upload key.** In the Apps Script editor: Project settings (gear) → Script properties → Add:
+   - `UPLOAD_KEY`: any long random string (e.g. a password-manager password, letters and digits only). The monitors need the same value.
+   - Optional: `RAW_KEEP_DAYS`, how many days of 10-minute rows to keep (default 365). Older rows are averaged into the `hourly` tab first, so long-term history isn't lost.
+4. **Deploy the web app.** Deploy → New deployment → type "Web app":
+   - Execute as: **Me**
+   - Who has access: **Anyone** (the monitors and the dashboard call it without a Google login; writes still need the key)
+   - Deploy, authorize the requested permissions, and copy the **Web app URL** (it ends in `/exec`).
+5. **Schedule the hourly rollup.** In the editor: Triggers (clock icon) → Add trigger → function `rollup`, event source "Time-driven", "Day timer", e.g. 2-3 am.
+6. **Point each monitor at it.** In the monitor's portal Console (or `nc <monitor> 23`):
+   ```
+   upload url https://script.google.com/macros/s/.../exec
+   upload key <the UPLOAD_KEY>
+   upload on
+   upload
+   ```
+   `upload` shows the status; within a minute or so the rows from `log.csv` appear in the `readings` tab. Device details in the portal shows the upload state too.
+7. **Point the dashboard at it:** put the same URL in `dashboard/config.js`.
+
+## Updating the script
+
+Edit `Code.gs` here, paste it into the editor, then Deploy → Manage deployments → edit (pencil) → Version: **New version** → Deploy. Keeping the same deployment keeps the same URL, so monitors and dashboard need no change.
+
+## Notes
+
+- **Duplicates:** the script remembers the newest epoch stored per `device_id` (script properties `last_<device>`) and skips anything older, so device retries never duplicate rows. To re-import after clearing the `readings` tab, delete those properties, then run `upload resend` on the monitor.
+- **Size:** about 25 cells per row; a spreadsheet holds 10 million cells. With `RAW_KEEP_DAYS` = 365, two monitors stay far below that indefinitely.
+- **New log columns** (after a firmware change) are added to the right of the header row automatically; old rows keep lining up.
+- **Rows without a clock time** (logged before NTP synced) are not uploaded.

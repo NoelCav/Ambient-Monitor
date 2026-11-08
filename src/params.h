@@ -17,6 +17,10 @@ struct Params {
     bool     testMode;
     bool     ledOn;       // status LED
     float    ldrR10;      // photoresistor ohms at 10 lux (light.h); set by `light cal`
+    // Upload to the Google Sheet web app (cloud/apps_script/Code.gs).
+    bool     uploadOn;
+    String   uploadUrl;   // the web app's /exec URL
+    String   uploadKey;   // must match the script's UPLOAD_KEY
 };
 
 // Global accessor for the loaded params.
