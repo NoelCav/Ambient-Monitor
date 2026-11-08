@@ -5,9 +5,9 @@
 // {
 //   "sample": Reading | null,   last logged sample
 //   "live":   Reading | null,   latest test reading (every LIVE_INTERVAL_MS)
-//                               plus "diag" (dust frame stats for that window)
-//   "sys":  uptime, reset reason, heap, WiFi, mode, schedule, log, tasks
-//   "hw":   climate sensor, dust sensor power, log storage
+//                               plus "diag": {errors, dt_ms} (dust frames)
+//   "sys":  uptime_s, reset, heap, rssi, test, sample_s, next_sample_s, tasks
+//   "hw":   climate, climate_addr, dust_on, dust_s, warm_s
 // }
 // Reading = {"age_s", "climate":{ok,temp,hum,pres}, "dust":{ok,pm[3],cf1[3],
 //            cnt[6],est,n,awake_s}, "sound":{avg,peak}, "light"}

@@ -4,7 +4,7 @@
 // Drop-in replacement for Serial in log output: every byte goes to the USB
 // serial port and into a RAM backlog (CONSOLE_BUF_BYTES) that is served over
 // WiFi, so the device can be debugged without a cable:
-//   - GET /console on the portal  (recent output, auto-refreshing page)
+//   - GET /console.txt (the portal's Console section polls it)
 //   - raw TCP on CONSOLE_TCP_PORT (backlog, then live; e.g. `nc <host> 23`)
 //
 // Writes never touch the network: TCP clients are fed from the backlog by

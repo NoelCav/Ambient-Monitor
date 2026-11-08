@@ -4,5 +4,5 @@ void wifiSetup();
 void wifiLoop();
 bool wifiConnected();
 
-// True when the device fell back to hosting its own AP (config still reachable).
-bool wifiApMode();
+// True once NTP has set the clock (epoch times before that are meaningless).
+bool timeSynced();

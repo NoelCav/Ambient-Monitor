@@ -2,8 +2,10 @@
 #include "console.h"
 #include "config.h"
 #include "params.h"
+#include "air_quality.h"
 #include "health.h"
 #include "tasks.h"
+#include "wifi_manager.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <time.h>
@@ -17,7 +19,7 @@ static const char* const ARCHIVE_PREFIX = "archive-";
 static const char* const HEADER =
     "epoch,uptime_s,boot,reset,device_id,"
     "temp_c,humidity_pct,pressure_hpa,"
-    "pm1_0,pm2_5,pm10,pm1_0_cf1,pm2_5_cf1,pm10_cf1,pms_awake_s,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
+    "pm1_0,pm2_5,pm10,pm1_0_cf1,pm2_5_cf1,pm10_cf1,pm2_5_est,pms_awake_s,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
     "sound_avg_rms,sound_peak_rms,light\n";
 
 static bool mounted = false;
@@ -91,17 +93,17 @@ static String oldestArchive() {
 }
 
 // Move a full (or outdated-layout) log into the saved list as
-// saved/archive-<reason>-<start time>.csv: reason is full, columns or migrated;
-// the time is the log's first row (UTC). If storage is short, the oldest archives are deleted first;
-// user-named saved logs are never deleted automatically.
-static void archive(const char* path, const char* reason, const char* why) {
+// saved/archive-<reason>-<start time>.csv. reason: full, columns or migrated;
+// the time is the log's first row, in UTC. Then, if storage is short, delete
+// the oldest archives (user-named saved logs are never deleted).
+static void archive(const char* path, const char* reason) {
     LittleFS.mkdir(DATA_LOG_SAVED_DIR);
     long e = firstEpoch(path);
     String name;
-    if (e > 1704067200) {
+    if (e > 0) {
         time_t t = e;
         struct tm tm;
-        localtime_r(&t, &tm);
+        gmtime_r(&t, &tm);
         char b[24];
         strftime(b, sizeof(b), "%Y%m%d-%H%M", &tm);
         name = String(ARCHIVE_PREFIX) + reason + "-" + b;
@@ -110,12 +112,10 @@ static void archive(const char* path, const char* reason, const char* why) {
     }
     String dst = String(DATA_LOG_SAVED_DIR) + "/" + name + ".csv";
     for (int i = 2; LittleFS.exists(dst); i++) dst = String(DATA_LOG_SAVED_DIR) + "/" + name + "-" + i + ".csv";
-    if (!LittleFS.rename(path, dst)) {
-        LittleFS.remove(path);
-        Console.printf("DataLog: archive of %s failed; deleted it (%s)\n", path, why);
-    } else {
-        Console.printf("DataLog: %s -> %s (%s)\n", path, dst.c_str(), why);
-    }
+    // A failed rename leaves the log where it is (it keeps growing) rather
+    // than losing data.
+    if (LittleFS.rename(path, dst)) Console.printf("DataLog: %s -> %s\n", path, dst.c_str());
+    else Console.printf("DataLog: could not archive %s (%s); keeping it\n", path, reason);
     while (LittleFS.totalBytes() - LittleFS.usedBytes() < LOG_MAX_BYTES + SAVE_HEADROOM) {
         String old = oldestArchive();
         if (!old.length()) break;
@@ -124,17 +124,13 @@ static void archive(const char* path, const char* reason, const char* why) {
     }
 }
 
-static void rotate(const char* reason, const char* why) {
-    archive(DATA_LOG_PATH, reason, why);
+static void rotate(const char* reason) {
+    archive(DATA_LOG_PATH, reason);
     writeHeaderIfEmpty();
 }
 
 static void rotateIfNeeded() {
-    File f = LittleFS.open(DATA_LOG_PATH, FILE_READ);
-    if (!f) return;
-    size_t size = f.size();
-    f.close();
-    if (size >= LOG_MAX_BYTES) rotate("full", "size limit");
+    if (fileSize(DATA_LOG_PATH) >= LOG_MAX_BYTES) rotate("full");
 }
 
 // The log outlives firmware updates, so a build that changes the columns would
@@ -148,7 +144,7 @@ static void rotateIfHeaderChanged() {
     String current = HEADER;
     current.trim();
     stored.trim();
-    if (stored != current) rotate("columns", "column layout changed");
+    if (stored != current) rotate("columns");
 }
 
 void dataLogSetup() {
@@ -171,7 +167,7 @@ void dataLogSetup() {
     p.end();
 
     // Logs rotated by older firmware went to log.old.csv; move it into the list.
-    if (LittleFS.exists(LEGACY_OLD_PATH)) archive(LEGACY_OLD_PATH, "migrated", "migrating log.old.csv");
+    if (LittleFS.exists(LEGACY_OLD_PATH)) archive(LEGACY_OLD_PATH, "migrated");
     rotateIfHeaderChanged();
     writeHeaderIfEmpty();
     Console.printf("DataLog: mounted, boot #%u, %u bytes used of %u\n",
@@ -179,11 +175,6 @@ void dataLogSetup() {
 }
 
 bool dataLogMounted() { return mounted; }
-
-size_t dataLogSize() {
-    Guard g(mtx);
-    return mounted ? fileSize(DATA_LOG_PATH) : 0;
-}
 
 void dataLogClear() {
     Guard g(mtx);
@@ -198,26 +189,24 @@ void dataLogAppend(const Reading& r) {
     if (!mounted) return;
     rotateIfNeeded();
 
-    time_t now;
-    time(&now);
-    bool synced = now > 1704067200;  // same "NTP synced" threshold as elsewhere
+    bool synced = timeSynced();
 
     // Invalid sensors leave their columns empty rather than logging zeros.
     char env[48] = ",,";
     if (r.climate.ok) {
         snprintf(env, sizeof(env), "%.2f,%.1f,%.1f", r.climate.temp, r.climate.hum, r.climate.pres);
     }
-    char pm[128] = ",,,,,,,,,,,,";
+    char pm[128] = ",,,,,,,,,,,,,";
     if (r.dustOk) {
         const PmsFrame& d = r.dust;
-        snprintf(pm, sizeof(pm), "%u,%u,%u,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u",
-            d.pm[0], d.pm[1], d.pm[2], d.cf1[0], d.cf1[1], d.cf1[2], (unsigned long)r.dustAwakeS,
+        snprintf(pm, sizeof(pm), "%u,%u,%u,%u,%u,%u,%.1f,%lu,%u,%u,%u,%u,%u,%u",
+            d.pm[0], d.pm[1], d.pm[2], d.cf1[0], d.cf1[1], d.cf1[2], pm25AltCf3(d), (unsigned long)r.dustAwakeS,
             d.cnt[0], d.cnt[1], d.cnt[2], d.cnt[3], d.cnt[4], d.cnt[5]);
     }
 
     char line[256];
     int n = snprintf(line, sizeof(line), "%s,%lu,%u,%s,%s,%s,%s,%.1f,%.1f,%.0f\n",
-        synced ? String((long)now).c_str() : "",
+        synced ? String((long)time(nullptr)).c_str() : "",
         (unsigned long)(r.at_ms / 1000), (unsigned)bootCount, resetReasonStr(), params().deviceId.c_str(),
         env, pm, r.soundAvg, r.soundPeak, r.light);
 
@@ -334,13 +323,19 @@ void dataLogForEachSaved(void (*fn)(const String& name, size_t bytes, void* ctx)
     }
 }
 
-size_t dataLogFreeBytes() {
-    return mounted ? LittleFS.totalBytes() - LittleFS.usedBytes() : 0;
-}
-
-size_t dataLogRowCount() {
+DataLogStats dataLogStats() {
     Guard g(mtx);
-    return mounted ? rowCount() : 0;
+    DataLogStats s;
+    if (!mounted) return s;
+    s.rows = rowCount();
+    s.bytes = fileSize(DATA_LOG_PATH);
+    s.freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
+    // Rows that still fit before the log is archived, from the average row
+    // size so far (header excluded; ~120 bytes assumed until there are rows).
+    size_t hdr = strlen(HEADER);
+    size_t rowBytes = s.rows && s.bytes > hdr ? (s.bytes - hdr) / s.rows : 120;
+    s.rowsLeft = s.bytes < LOG_MAX_BYTES ? (LOG_MAX_BYTES - s.bytes) / (rowBytes ? rowBytes : 1) : 0;
+    return s;
 }
 
 // Print the header and the last n rows of log.csv to the console. Two passes

@@ -6,7 +6,6 @@
 static SemaphoreHandle_t mtx;
 static PmsParser parser;
 static FrameAverage<PMS_AVG_FRAMES> avg;
-static PmsFrame last = {};
 static volatile bool wantOn = false;
 static bool on = false;
 static uint32_t onSince = 0, lastFrameMs = 0, intervalMs = 0;
@@ -28,7 +27,6 @@ static void dustPass() {
         PmsFrame f;
         if (!parser.push((uint8_t)Serial1.read(), f) || !on) continue;
         avg.add(f);
-        last = f;
         intervalMs = lastFrameMs ? now - lastFrameMs : 0;
         lastFrameMs = now;
     }
@@ -62,7 +60,6 @@ DustStatus dustStatus() {
     s.fresh = on && lastFrameMs && now - lastFrameMs < 5000;
     s.frames = avg.count;
     s.avg = avg.average();
-    s.last = last;
     s.intervalMs = intervalMs;
     s.totalFrames = parser.frames;
     s.totalErrors = parser.errors;

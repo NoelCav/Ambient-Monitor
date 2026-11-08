@@ -40,12 +40,12 @@ String readingText(const Reading& r, const char* what) {
         return true;
     };
     if (part("climate")) {
-        if (r.climate.ok) snprintf(buf, sizeof(buf), "%.2f C, %.1f %% RH, %.1f hPa", r.climate.temp, r.climate.hum, r.climate.pres);
+        if (r.climate.ok) snprintf(buf, sizeof(buf), "climate %.2f C, %.1f %% RH, %.1f hPa", r.climate.temp, r.climate.hum, r.climate.pres);
         else snprintf(buf, sizeof(buf), "climate: no reading (try diag climate)");
         out += buf;
     }
     if (part("dust")) {
-        if (r.dustOk) snprintf(buf, sizeof(buf), "PM1/2.5/10 %u/%u/%u ug/m3 (PM2.5 est %.0f; %u frames, awake %lu s)",
+        if (r.dustOk) snprintf(buf, sizeof(buf), "dust PM1/2.5/10 %u/%u/%u ug/m3 (PM2.5 est %.0f; %u frames, awake %lu s)",
             r.dust.pm[0], r.dust.pm[1], r.dust.pm[2], pm25AltCf3(r.dust), r.dustFrames, (unsigned long)r.dustAwakeS);
         else if (r.dustAwakeS) snprintf(buf, sizeof(buf), "dust: no frames yet (awake %lu s)", (unsigned long)r.dustAwakeS);
         else snprintf(buf, sizeof(buf), "dust: asleep ('sample' or test mode wakes it)");
@@ -67,7 +67,7 @@ static void samplerTask(void*) {
     uint32_t lastLiveMs = millis();
     for (;;) {
         uint32_t now = millis(), interval = sampleIntervalMs();
-        bool test = params().liveDebug;
+        bool test = params().testMode;
         bool requested;
         {
             Guard g(mtx);
@@ -83,7 +83,6 @@ static void samplerTask(void*) {
             diag.errors = d.totalErrors - prev.totalErrors;
             diag.bytes = d.totalBytes - prev.totalBytes;
             diag.intervalMs = d.intervalMs;
-            diag.last = d.last;
             prev = d;
             Reading r = takeReading(SPAN_LIVE);
             {

@@ -37,7 +37,7 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 | `src/data_log.h/.cpp` | Persistent CSV log, saved logs, archives (mutex-guarded) |
 | `src/commands.h/.cpp` | Console commands (help text is the reference) |
 | `src/config_portal.h/.cpp` | Web portal (single page, JS renders status.json) and log/download endpoints |
-| `src/console.h/.cpp` | `Console` (a `Print`): Serial + 16 KB RAM backlog for `/console`, TCP port 23 |
+| `src/console.h/.cpp` | `Console` (a `Print`): Serial + 16 KB RAM backlog for `/console.txt` and TCP port 23 |
 | `src/config.h` | Pins, defaults, timing/measurement constants, log/console sizes, passwords |
 | `src/params.h/.cpp`, `src/health.h/.cpp`, `src/wifi_manager.h/.cpp` | NVS params, reset reason, WiFi/NTP/mDNS/OTA |
 | `lib/ambient/` | Pure C++ (no Arduino): PMS frame parser, `Window`/`SoundLightStats`/`FrameAverage`, ALT-CF3 |
@@ -49,21 +49,21 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 
 ## Runtime params (web portal)
 - Edit at `http://esp32-ambient-01.local` (mDNS name = sanitized `device_id`) or the device IP. If WiFi can't be joined, the device hosts SoftAP `AmbientMonitor-setup` with the same portal at 192.168.4.1. Saving persists to NVS and reboots.
-- Params: `device_id`, `wifi_ssid`/`wifi_password`, `sample_interval_s` (1–86400, default 600), `live_dbg`/**Test mode** (default on, `DEFAULT_LIVE_DEBUG`).
+- Params: `device_id`, `wifi_ssid`/`wifi_password`, `sample_interval_s` (1–86400, default 600), **test mode** (`Params::testMode`, default on, `DEFAULT_TEST_MODE`; stored under the older NVS key `live_dbg`).
 - Schedule: the dust sensor wakes `PMS_WARMUP_MS` (90 s) before each sample and sleeps right after it. The first sample comes once it has warmed up after boot. `sample` (or the portal's Sample now) wakes it and samples once warm; the interval restarts from there.
 - Test mode keeps the dust sensor on and prints `[TEST]` and `[DUST]` lines every 5 s. The test reading itself is computed every 5 s in both modes (portal fallback before the first sample, `read` command).
 
 ## Remote debugging (no USB needed)
-- **Console:** all output goes through `Console.print*` (never `Serial.print*` directly). Read it at `/console` (auto-refreshing page), `/console.txt`, or raw TCP port 23 (backlog, then live). Console writes never touch the network: TCP clients are fed from the backlog by `consoleLoop()` using non-blocking `send()`, so a stuck client can't stall the loop (`WiFiClient::write` can block ~10 s).
+- **Console:** all output goes through `Console.print*` (never `Serial.print*` directly). Read it in the portal's Console section, at `/console.txt`, or on raw TCP port 23 (backlog, then live). Every portal action runs a console command through `/cmd?c=`, so the page and the console can't diverge. Console writes never touch the network: TCP clients are fed from the backlog by `consoleLoop()` using non-blocking `send()`, so a stuck client can't stall the loop (`WiFiClient::write` can block ~10 s).
 - **OTA:** ArduinoOTA on port 3232, started in `wifiSetup()` and serviced in `wifiLoop()`. It uses our mDNS responder (ArduinoOTA's own is disabled) and also works over the SoftAP.
 - **Reset reason** prints at boot, appears in `status.json` and is a column in the data log. A `brownout` or `task_wdt` there explains an unexplained gap.
 
 ## Data log (on-device)
-- `dataLogAppend()` writes one CSV row per sample to `/log.csv` on LittleFS. Columns: epoch (empty before NTP), uptime_s, boot (NVS counter, namespace `datalog`), reset, device_id, temp/humidity/pressure, PM (atmospheric + CF=1, 10-frame averages), pms_awake_s, particle counts, sound_avg_rms, sound_peak_rms, light (mean over the interval). Invalid sensors leave their columns empty.
+- `dataLogAppend()` writes one CSV row per sample to `/log.csv` on LittleFS. Columns: epoch (empty before NTP), uptime_s, boot (NVS counter, namespace `datalog`), reset, device_id, temp/humidity/pressure, PM (atmospheric + CF=1, 10-frame averages), pm2_5_est (ALT-CF3), pms_awake_s, particle counts, sound_avg_rms, sound_peak_rms, light (mean over the interval). Invalid sensors leave their columns empty.
 - It **survives firmware uploads** (USB or OTA only write the app partition). It is lost on `pio run -t uploadfs`, a chip erase, or a partition-table change.
 - When it reaches `LOG_MAX_BYTES` (512 KB), or at boot when the stored header differs from the current columns, it is **archived** to `saved/archive-<full|columns|migrated>-<first-row time, UTC>.csv` (reason in the name) and a new log starts, so each file has one layout. Archives sit in the saved-log list with user saves; if free space drops below one log + 32 KB, the oldest `archive-*` files are deleted (user-named saves never are). Older firmware's `log.old.csv` is migrated into an archive at boot.
-- PM2.5: the log keeps raw atmospheric `pm2_5` (trend data) plus `pm2_5_cf1` (for the EPA PurpleAir correction, 0.524*CF1 - 0.0862*RH + 5.75). The portal's health estimate is ALT-CF3 (Wallace 2022, validated indoors), computed from the logged particle counts: 3*(0.00030418*N0.3-0.5 + 0.0018512*N0.5-1 + 0.02069706*N1-2.5).
-- Portal: Data log lists the current log and saved logs with download / save copy (whole or range) / rename / graph / delete. Graphs section plots any log or all logs combined (deduplicated by epoch). Endpoints: `GET /log.csv`, `/saved.csv?name=`, `/logs.json`; `POST /log/clear` deletes the current log only.
+- PM2.5: the log keeps raw atmospheric `pm2_5` (trend data) plus `pm2_5_cf1` (for the EPA PurpleAir correction, 0.524*CF1 - 0.0862*RH + 5.75). The health estimate is ALT-CF3 (Wallace 2022, validated indoors), computed in `lib/ambient/air_quality.h` from the particle counts, logged as `pm2_5_est` and shown by the portal: 3*(0.00030418*N0.3-0.5 + 0.0018512*N0.5-1 + 0.02069706*N1-2.5).
+- Portal: Data log lists the current log and saved logs with download / save copy (whole or range) / rename / graph / delete. Graphs section plots any log or all logs combined (deduplicated by epoch). Endpoints: `GET /log.csv`, `/saved.csv?name=`, `/logs.json`; changes (save, rename, delete, clear) go through `/cmd`.
 
 ## Sensors — facts and findings
 - **PMS5003** (Plantower manual v2.3): VCC 4.5–5.5 V (fan needs 5 V), ~100 mA; UART/SET 3.3 V TTL; SET high = run, low = sleep; stable data ≥30 s after wake; frame = 32 bytes, Data1–3 CF=1, Data4–6 atmospheric (used), Data7–12 particle counts per 0.1 L. Weak at coarse (>~5 µm) particles: counts >5/>10 µm stay ~0 and PM10 ≈ PM2.5, so visible sunbeam dust barely registers.

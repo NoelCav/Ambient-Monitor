@@ -18,9 +18,6 @@ void dataLogSetup();
 
 void dataLogAppend(const Reading& r);
 
-// Bytes used by the current log file (0 if not mounted).
-size_t dataLogSize();
-
 bool dataLogMounted();
 
 // Delete the current log and start a new one with a header row (saved logs are kept).
@@ -37,6 +34,11 @@ bool dataLogSave(const String& name, size_t lastRows, long sinceEpoch, String& e
 bool dataLogRemoveSaved(const String& name);
 bool dataLogRenameSaved(const String& from, const String& to, String& err);
 void dataLogForEachSaved(void (*fn)(const String& name, size_t bytes, void* ctx), void* ctx);
-size_t dataLogFreeBytes();
-size_t dataLogRowCount();
+struct DataLogStats {
+    size_t rows = 0;       // data rows in log.csv
+    size_t bytes = 0;      // size of log.csv
+    size_t rowsLeft = 0;   // rows that fit before it is archived (estimate)
+    size_t freeBytes = 0;  // free storage
+};
+DataLogStats dataLogStats();
 void dataLogPrintTail(size_t n);

@@ -15,10 +15,9 @@ static bool apActive = false;
 
 static void checkNtpSync() {
     if (ntpSynced) return;
-    time_t now;
-    time(&now);
-    if (now > 1704067200) {
+    if (timeSynced()) {
         ntpSynced = true;
+        time_t now = time(nullptr);
         struct tm timeinfo;
         localtime_r(&now, &timeinfo);
         Console.printf("NTP: time synced — %04d-%02d-%02d %02d:%02d:%02d\n",
@@ -154,6 +153,6 @@ bool wifiConnected() {
     return WiFi.status() == WL_CONNECTED;
 }
 
-bool wifiApMode() {
-    return apActive;
+bool timeSynced() {
+    return time(nullptr) > 1704067200;  // after 2024-01-01: NTP has run
 }

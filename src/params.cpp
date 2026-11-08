@@ -26,14 +26,14 @@ void paramsLoad() {
     g_params.wifiPassword    = prefs.getString("wifi_pass", WIFI_PASSWORD);
     g_params.deviceId        = prefs.getString("device_id", DEVICE_ID);
     g_params.sampleIntervalS = prefs.getUInt("sample_s", DEFAULT_SAMPLE_INTERVAL_S);
-    g_params.liveDebug       = prefs.getBool("live_dbg", DEFAULT_LIVE_DEBUG);
+    g_params.testMode       = prefs.getBool("live_dbg", DEFAULT_TEST_MODE);  // key predates the name
     prefs.end();
 
     validate(g_params);
 
-    Console.printf("Params: device=%s ssid=%s sample=%us live_debug=%s\n",
+    Console.printf("Params: device=%s ssid=%s sample=%us test=%s\n",
         g_params.deviceId.c_str(), g_params.wifiSsid.c_str(),
-        (unsigned)g_params.sampleIntervalS, g_params.liveDebug ? "on" : "off");
+        (unsigned)g_params.sampleIntervalS, g_params.testMode ? "on" : "off");
 }
 
 void paramsSave(const Params& in) {
@@ -45,7 +45,7 @@ void paramsSave(const Params& in) {
     prefs.putString("wifi_pass", p.wifiPassword);
     prefs.putString("device_id", p.deviceId);
     prefs.putUInt("sample_s", p.sampleIntervalS);
-    prefs.putBool("live_dbg", p.liveDebug);
+    prefs.putBool("live_dbg", p.testMode);
     // Keys from the removed Firestore upload path.
     prefs.remove("upload_en");
     prefs.remove("batch");

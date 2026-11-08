@@ -51,9 +51,9 @@
 #endif
 
 // Test mode default: PMS stays powered and [PMS]/[ENV] diagnostics print every
-// 5s. Toggle at runtime from the portal ("live_dbg"); this only seeds NVS.
-#ifndef DEFAULT_LIVE_DEBUG
-#define DEFAULT_LIVE_DEBUG true
+// 5 s. Toggled at runtime (portal switch, `test on|off`); this only seeds NVS.
+#ifndef DEFAULT_TEST_MODE
+#define DEFAULT_TEST_MODE true
 #endif
 
 // --- Timing and measurement ---
@@ -75,7 +75,7 @@
 
 // --- Network console (recent serial output, served over WiFi) ---
 #ifndef CONSOLE_BUF_BYTES
-#define CONSOLE_BUF_BYTES (16 * 1024)  // backlog kept in RAM for /console and telnet
+#define CONSOLE_BUF_BYTES (16 * 1024)  // backlog kept in RAM for /console.txt and TCP port 23
 #endif
 #ifndef CONSOLE_TCP_PORT
 #define CONSOLE_TCP_PORT 23

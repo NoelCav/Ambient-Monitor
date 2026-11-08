@@ -10,7 +10,6 @@
 
 static WebServer server(80);
 
-
 // HTML escape for safe insertion into text and (either-quoted) attribute values.
 static String esc(const String& s) {
     String out;
@@ -29,16 +28,16 @@ static String esc(const String& s) {
     return out;
 }
 
-// Portal home page (design D): one centered column, large text. Each section
-// has a grey header bar that collapses it (+/-); the Test readings bar also
-// carries the test-mode switch, which works independently of collapsing.
-// Everything is shown as tiles, three per row, outlined in a colour when the
-// value has a good/bad range. "Last sample" is always what was written to the
-// log (before the first sample: the boot self-test readings, with a warning).
-// "Test readings" has the same tiles measured the same way over the last
-// 5 s. Outlines are colour gradients per reading. Values come from
-// /status.json (polled every 3 s); only the settings form values are filled
-// in server-side.
+// Portal home page: one centered column, large text. Each section has a grey
+// header bar that collapses it (+/-); the Test readings bar also carries the
+// test-mode switch, which works independently of collapsing. Readings are
+// tiles, three per row, outlined with a colour gradient when the value has a
+// good/bad range. "Last sample" is what was written to the log (before the
+// first one: the current readings, under a warning); "Test readings" is the
+// same tiles over the last 5 s. Values come from /status.json (polled every
+// 3 s); every action goes through /cmd (the console commands), so the page
+// and the console never diverge. Only the settings form is filled in
+// server-side.
 static const char ROOT_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ambient Monitor</title>
@@ -146,6 +145,7 @@ function tile(l,v,u,q){var m=q?q[0]:'',c=q?q[1]:null,tc=c&&!q[2];
 function grid(t){return '<div class="g">'+t+'</div>'}
 function none(n,m){var t='';n.forEach(function(l){t+=tile(l,'–','',[m,null])});return t}
 // Colour scales: smooth gradients between [value, colour] stops.
+var STABLE_S=30;  // PMS5003 datasheet: data stable 30 s after waking
 var GREEN='#16a34a',YEL='#ca8a04',ORG='#ea580c',RED='#dc2626',PUR='#9333ea',BLUE='#2563eb',UG='µg/m³';
 function hex(c){return [1,3,5].map(function(i){return parseInt(c.substr(i,2),16)})}
 function grad(st,v){if(v<=st[0][0])return st[0][1];for(var i=1;i<st.length;i++)if(v<=st[i][0]){
@@ -166,7 +166,7 @@ var PM25=[[9,'Good'],[35.4,'Moderate'],[55.4,'Unhealthy for sensitive'],[125.4,'
 var PM10=[[54,'Good'],[154,'Moderate'],[254,'Unhealthy for sensitive'],[354,'Unhealthy'],[424,'Very unhealthy'],[1e9,'Hazardous']];
 function pmQ(B,v){return [band(B,v),grad([[B[0][0],GREEN],[B[1][0],YEL],[B[2][0],ORG],[B[3][0],RED],[B[4][0],PUR]],v)]}
 // Sound (RMS of the mic signal, ADC counts): quiet room green -> loud red.
-// Thresholds from bench measurements; see SOUND_* notes in CLAUDE.md.
+// SQ thresholds are provisional; see the KY-037 notes in CLAUDE.md.
 function sndQ(v){return [band([[SQ[0],'Quiet'],[SQ[1],'Some noise'],[SQ[2],'Loud'],[1e9,'Very loud']],v),grad([[SQ[0],GREEN],[SQ[1],YEL],[SQ[2],RED]],v)]}
 var SQ=[4,15,60];
 // Light: dark grey (dark) -> yellow (bright). Not good or bad.
@@ -202,7 +202,7 @@ function render(d){
  // Test readings: the same tiles, measured the same way over the last 5 s.
  if(testOn&&L){var u=L.dust,g=L.diag,c=u.cnt;
   $('tstb').innerHTML=readings(L,dustMsg)+'<div class="muted">Last 5 s, measured the same way as a sample. Updated '+L.age_s+' s ago.</div>';
-  t=tile('Dust sensor',dur(u.awake_s),'awake',u.awake_s<30?['Warming up',YEL]:['Stable',GREEN]);
+  t=tile('Dust sensor',dur(u.awake_s),'awake',u.awake_s<STABLE_S?['Warming up',YEL]:['Stable',GREEN]);
   t+=tile('Frame interval',u.ok?g.dt_ms:'–','ms',!u.ok?['No frames',RED]:g.dt_ms<600||g.dt_ms>2500?['Unusual',YEL]:['Normal',null]);
   t+=tile('Frame errors',g.errors,'in 5 s',g.errors?['Check wiring',RED]:['None',null]);
   t+=tile('> 0.3 µm',c[0],'per 0.1 L',['Smoke, cooking',null])+tile('> 1.0 µm',c[2],'per 0.1 L',['Fine dust',null]);
@@ -211,7 +211,7 @@ function render(d){
   $('dia-b').innerHTML=grid(t)+'<div class="muted">Counts and CF=1 averaged over the last '+u.n+' frames. Updated '+L.age_s+' s ago.</div>'}
  else{$('tstb').innerHTML='<div class="muted">'+(testOn?'Starting: values appear within 5 s.':'Off. Turn on to keep the dust sensor awake and see readings every 5 s.')+'</div>';
   $('dia-b').innerHTML=grid(tile('Dust sensor',h.dust_on?dur(h.dust_s):'Asleep',h.dust_on?'awake':'',
-   [h.dust_on?(h.dust_s<30?'Warming up':'Stable'):'Wakes '+h.warm_s+' s before a sample',null]))+
+   [h.dust_on?(h.dust_s<STABLE_S?'Warming up':'Stable'):'Wakes '+h.warm_s+' s before a sample',null]))+
    '<div class="muted">Frame and particle details need test mode.</div>'}
  // Device details: timing, then status, then system.
  t=tile('Uptime',dur(s.uptime_s),'',null)+tile('Next sample','in '+dur(s.next_sample_s),'',null)+tile('Sample every',dur(s.sample_s),'',null);
@@ -226,7 +226,8 @@ function render(d){
 }
 function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
  .catch(function(){set('upd','reconnecting…')})}
-function cmd(c){return fetch('/cmd?c='+encodeURIComponent(c)).then(function(r){return r.text()})}
+// Run a console command; resolves to its output without the "> command" echo.
+function cmd(c){return fetch('/cmd?c='+encodeURIComponent(c)).then(function(r){return r.text()}).then(function(x){return x.replace(/^>.*\n/,'').trim()})}
 // Test switch: takes effect immediately; the message says what the scheduler does next.
 function setTest(on){
  if(!open.tst)tog('tst');
@@ -235,7 +236,7 @@ function setTest(on){
    'Test mode off. Dust sensor sleeps until '+(last?last.hw.warm_s:90)+' s before the next sample'+(last?' (in '+dur(last.sys.next_sample_s)+')':'')+'.');
   setTimeout(function(){msg('tmsg','')},15000);tick()})}
 function sampleNow(){msg('dmsg','Requesting a sample…');
- cmd('sample').then(function(x){msg('dmsg',x.trim()||'Sample requested.');tick()})}
+ cmd('sample').then(function(x){msg('dmsg',x||'Sample requested.');tick()})}
 function reboot(){if(!confirm('Reboot the monitor now?'))return;
  cmd('reboot').then(function(){msg('dmsg','Rebooting. This page reconnects by itself.')})}
 function con(pin){fetch('/console.txt').then(function(r){return r.text()}).then(function(x){var p=$('cout'),
@@ -276,16 +277,16 @@ function showSave(){$('savef').classList.toggle('hide');$('sname').focus()}
 function showRen(n){$('ren-'+n).classList.toggle('hide')}
 function saveLog(){var n=$('sname').value.trim(),r=$('srange').value;
  if(!n){msg('lmsg','Enter a name first.');return}
- cmd('log save '+n+(r?' '+r:'')).then(function(x){msg('lmsg',x.replace(/^>.*\n/,'').trim());logs()})}
+ cmd('log save '+n+(r?' '+r:'')).then(function(x){msg('lmsg',x);logs()})}
 function renLog(n){var to=$('rn-'+n).value.trim();if(!to||to==n)return;
- cmd('log mv '+n+' '+to).then(function(x){msg('lmsg',x.replace(/^>.*\n/,'').trim()||'Renamed.');logs()})}
-function rmLog(n){if(!confirm('Delete saved log '+n+'?'))return;cmd('log rm '+n).then(function(x){msg('lmsg',x.replace(/^>.*\n/,'').trim());logs()})}
+ cmd('log mv '+n+' '+to).then(function(x){msg('lmsg',x||'Renamed.');logs()})}
+function rmLog(n){if(!confirm('Delete saved log '+n+'?'))return;cmd('log rm '+n).then(function(x){msg('lmsg',x);logs()})}
 function clearLog(){if(!confirm('Delete the current log? Saved logs are kept.'))return;
- fetch('/log/clear',{method:'POST'}).then(function(){msg('lmsg','Current log cleared.');logs()})}
+ cmd('log clear').then(function(x){msg('lmsg',x);logs()})}
 
 // Graphs: one small chart per reading on a shared time axis, drawn as SVG from
 // the CSV in the browser. Raw values (the trend data); PM2.5 also shows the
-// ALT-CF3 indoor estimate dashed. Rows without a clock time are skipped.
+// logged ALT-CF3 indoor estimate, dashed. Rows without a clock time are skipped.
 var G=null;
 function fillSources(){var s=$('gsrc'),cur=s.value,o='<option value="">Current log</option><option value="*">All logs combined</option>';
  (LOGS?LOGS.saved:[]).map(function(x){return x.name}).sort().reverse().forEach(function(n){o+='<option value="'+esc(n)+'">'+esc(n)+'</option>'});
@@ -302,13 +303,11 @@ function graph(){var src=$('gsrc').value;set('gmsg','Loading…');$('charts').in
   ts.forEach(function(t){if(t)parse(t).forEach(function(r){if(!(r.epoch>0)){skipped++;return}byT[r.epoch]=r})});
   var rows=Object.keys(byT).map(function(k){return byT[k]}).sort(function(a,b){return a.epoch-b.epoch});
   G={rows:rows,skipped:skipped};draw()}).catch(function(){set('gmsg','Could not load the log.')})}
-function est(r){var n1=Math.max(0,r.cnt_0_3-r.cnt_0_5),n2=Math.max(0,r.cnt_0_5-r.cnt_1_0),n3=Math.max(0,r.cnt_1_0-r.cnt_2_5);
- return 3*(0.00030418*n1+0.0018512*n2+0.02069706*n3)}
 var SER=[
  {t:'Temperature',u:'°F',d:1,l:[function(r){return r.temp_c*9/5+32}]},
  {t:'Humidity',u:'%',d:0,l:[function(r){return r.humidity_pct}]},
  {t:'Pressure',u:'hPa',d:1,l:[function(r){return r.pressure_hpa}]},
- {t:'PM2.5',u:UG,d:0,l:[function(r){return r.pm2_5},est],n:['raw','est.']},
+ {t:'PM2.5',u:UG,d:0,l:[function(r){return r.pm2_5},function(r){return r.pm2_5_est}],n:['raw','est.']},
  {t:'PM1.0',u:UG,d:0,l:[function(r){return r.pm1_0}]},
  {t:'PM10',u:UG,d:0,l:[function(r){return r.pm10}]},
  {t:'Sound',u:'',d:1,l:[function(r){return r.sound_avg_rms},function(r){return r.sound_peak_rms}],n:['avg','peak']},
@@ -384,38 +383,17 @@ static void handleStatus() {
     server.send(200, "application/json", statusJson());
 }
 
-// Stream a log file as a CSV download. The file name carries the device ID so
+// Stream a log file as a CSV download, named <device_id>-<name>.csv so
 // downloads from several monitors don't overwrite each other.
-static void sendLogFile(const char* path, const char* suffix) {
+static void sendCsv(const String& path, const String& name) {
     if (!dataLogMounted() || !LittleFS.exists(path)) {
-        server.send(404, "text/plain", "No log file yet");
+        server.send(404, "text/plain", "No such log");
         return;
     }
     File f = LittleFS.open(path, FILE_READ);
-    server.sendHeader("Content-Disposition",
-        "attachment; filename=\"" + params().deviceId + suffix + ".csv\"");
+    server.sendHeader("Content-Disposition", "attachment; filename=\"" + params().deviceId + "-" + name + ".csv\"");
     server.streamFile(f, "text/csv");
     f.close();
-}
-
-// Console page: polls /console.txt and keeps the view pinned to the bottom
-// unless the user has scrolled up to read.
-static void handleConsolePage() {
-    server.send(200, "text/html",
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Console</title><style>body{margin:0;font-family:sans-serif}"
-        "header{padding:8px 12px;background:#222;color:#eee;font-size:14px}"
-        "header a{color:#9cf}pre{margin:0;padding:8px 12px;font-size:12px;"
-        "white-space:pre-wrap;word-break:break-all}</style></head><body>"
-        "<header><a href='/'>&larr; back</a> &middot; console "
-        "<span id='st'></span></header><pre id='c'></pre><script>"
-        "var c=document.getElementById('c'),st=document.getElementById('st');"
-        "function t(){fetch('/console.txt').then(function(r){return r.text();})"
-        ".then(function(x){var b=(innerHeight+scrollY)>=document.body.scrollHeight-40;"
-        "c.textContent=x;st.textContent='';if(b)scrollTo(0,document.body.scrollHeight);})"
-        ".catch(function(){st.textContent='(reconnecting\\u2026)';});}"
-        "t();setInterval(t,2000);</script></body></html>");
 }
 
 // Run one console command and return only the output it produced.
@@ -433,53 +411,29 @@ static void appendSaved(const String& name, size_t bytes, void* ctx) {
     j += "{\"name\":\"" + name + "\",\"kb\":" + String((bytes + 1023) / 1024) + "}";
 }
 
-// Log status. rows_left estimates how many more samples fit in log.csv before
-// it reaches LOG_MAX_BYTES and is archived to saved/, from the average row
-// size so far (header excluded; ~110 bytes assumed until there are rows).
+// Current log stats and the saved-log list, for the Data log section.
 static void handleLogsJson() {
     String j = "[";
     dataLogForEachSaved(appendSaved, &j);
     j += "]";
-    size_t cur = 0, hdr = 0, rows = dataLogRowCount();
-    File f = dataLogMounted() ? LittleFS.open(DATA_LOG_PATH, FILE_READ) : File();
-    if (f) { cur = f.size(); hdr = f.readStringUntil('\n').length() + 1; f.close(); }
-    size_t rowB = rows && cur > hdr ? (cur - hdr) / rows : 110;
-    if (rowB < 1) rowB = 1;
-    size_t left = cur < LOG_MAX_BYTES ? (LOG_MAX_BYTES - cur) / rowB : 0;
+    DataLogStats s = dataLogStats();
     server.send(200, "application/json",
-        "{\"live_kb\":" + String((cur + 1023) / 1024) + ",\"rows\":" + String(rows) +
-        ",\"rows_left\":" + String(left) + ",\"max_kb\":" + String(LOG_MAX_BYTES / 1024) +
-        ",\"free_kb\":" + String(dataLogFreeBytes() / 1024) + ",\"saved\":" + j + "}");
+        "{\"live_kb\":" + String((s.bytes + 1023) / 1024) + ",\"rows\":" + String(s.rows) +
+        ",\"rows_left\":" + String(s.rowsLeft) + ",\"max_kb\":" + String(LOG_MAX_BYTES / 1024) +
+        ",\"free_kb\":" + String(s.freeBytes / 1024) + ",\"saved\":" + j + "}");
 }
 
 static void handleSavedDownload() {
     String name = dataLogSanitizeName(server.arg("name"));
-    String path = dataLogSavedPath(name);
-    if (!name.length() || !dataLogMounted() || !LittleFS.exists(path)) {
-        server.send(404, "text/plain", "No such saved log");
-        return;
-    }
-    File f = LittleFS.open(path, FILE_READ);
-    server.sendHeader("Content-Disposition",
-        "attachment; filename=\"" + params().deviceId + "-" + name + ".csv\"");
-    server.streamFile(f, "text/csv");
-    f.close();
-}
-
-static void handleLogClear() {
-    dataLogClear();
-    server.sendHeader("Location", "/");
-    server.send(303);
+    sendCsv(dataLogSavedPath(name), name);
 }
 
 void configPortalSetup() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status.json", HTTP_GET, handleStatus);
     server.on("/save", HTTP_POST, handleSave);
-    server.on("/console", HTTP_GET, handleConsolePage);
     server.on("/console.txt", HTTP_GET, [] { server.send(200, "text/plain", consoleBacklog()); });
-    server.on("/log.csv", HTTP_GET, [] { sendLogFile(DATA_LOG_PATH, "-log"); });
-    server.on("/log/clear", HTTP_POST, handleLogClear);
+    server.on("/log.csv", HTTP_GET, [] { sendCsv(DATA_LOG_PATH, "log"); });
     server.on("/cmd", handleCmd);  // GET or POST
     server.on("/logs.json", HTTP_GET, handleLogsJson);
     server.on("/saved.csv", HTTP_GET, handleSavedDownload);

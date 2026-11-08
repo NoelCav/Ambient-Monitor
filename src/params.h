@@ -8,8 +8,8 @@ struct Params {
     String   wifiPassword;
     String   deviceId;
     uint32_t sampleIntervalS;
-    // Test mode: PMS stays powered and live [PMS]/[ENV] lines print every 5s.
-    bool     liveDebug;
+    // Test mode: the dust sensor stays on and [TEST]/[DUST] lines print every 5 s.
+    bool     testMode;
 };
 
 // Global accessor for the loaded params.

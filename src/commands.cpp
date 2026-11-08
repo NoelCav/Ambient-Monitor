@@ -61,6 +61,12 @@ static const char* const HELP =
 
 static unsigned long rebootAt = 0;  // 0 = none pending
 
+static void printLogStats() {
+    DataLogStats s = dataLogStats();
+    Console.printf("log.csv: %u rows, %u KB, room for ~%u more; %u KB free\n", (unsigned)s.rows,
+        (unsigned)(s.bytes / 1024), (unsigned)s.rowsLeft, (unsigned)(s.freeBytes / 1024));
+}
+
 static void printStatus() {
     SamplerState s = samplerState();
     DustStatus d = dustStatus();
@@ -68,12 +74,12 @@ static void printStatus() {
         millis() / 1000, resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024));
     Console.printf("wifi: %s, ip %s, rssi %d dBm\n", wifiConnected() ? "connected" : "disconnected",
         WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
-    Console.printf("mode: %s, sample every %u s, next in %lu s%s\n", params().liveDebug ? "test" : "normal",
+    Console.printf("mode: %s, sample every %u s, next in %lu s%s\n", params().testMode ? "test" : "normal",
         (unsigned)params().sampleIntervalS, (unsigned long)s.nextSampleS, s.requested ? " (sample requested)" : "");
     Console.printf("climate: %s, dust: %s", climateFound() ? "ok" : "not found", d.on ? "awake" : "asleep");
     if (d.on) Console.printf(" %lu s%s", (unsigned long)(d.awakeMs / 1000), d.awakeMs < PMS_WARMUP_MS ? " (warming up)" : "");
     Console.println();
-    Console.printf("log: %u KB, %u KB free\n", (unsigned)(dataLogSize() / 1024), (unsigned)(dataLogFreeBytes() / 1024));
+    printLogStats();
     tasksPrint(Console);
 }
 
@@ -100,10 +106,10 @@ static void sampleCmd() {
 
 static void setTest(bool on) {
     Params p = params();
-    p.liveDebug = on;
+    p.testMode = on;
     paramsSave(p);
     Console.printf("test mode %s%s\n", on ? "on" : "off",
-        on ? "" : " (the dust sensor sleeps until 90 s before each sample)");
+        on ? "" : " (the dust sensor sleeps until shortly before each sample)");
 }
 
 static void setSampleInterval(uint32_t seconds) {
@@ -121,9 +127,7 @@ static void printSaved(const String& name, size_t bytes, void* ctx) {
 static void cmdLog(const String& sub, const String& arg) {
     if (!dataLogMounted()) { Console.println("log storage not mounted"); return; }
     if (sub == "") {
-        Console.printf("log.csv: %u rows; %u KB; %u KB free\n",
-            (unsigned)dataLogRowCount(), (unsigned)(dataLogSize() / 1024),
-            (unsigned)(dataLogFreeBytes() / 1024));
+        printLogStats();
     } else if (sub == "tail") {
         long n = arg.length() ? arg.toInt() : 10;
         dataLogPrintTail(n > 0 ? n : 10);
@@ -149,24 +153,23 @@ static void cmdLog(const String& sub, const String& arg) {
                 return;
             }
             if (unit == 'm' || unit == 'h') {
-                time_t now;
-                time(&now);
-                if (now < 1704067200) {
+                if (!timeSynced()) {
                     Console.println("clock not synced yet; use a row count instead (e.g. log save x 20)");
                     return;
                 }
-                sinceEpoch = (long)now - n * (unit == 'h' ? 3600L : 60L);
+                sinceEpoch = (long)time(nullptr) - n * (unit == 'h' ? 3600L : 60L);
             } else {
                 lastRows = n;
             }
         }
         if (!dataLogSave(name, lastRows, sinceEpoch, err)) Console.printf("log save failed: %s\n", err.c_str());
     } else if (sub == "list") {
-        Console.printf("  log.csv                         %6u KB (current)\n", (unsigned)(dataLogSize() / 1024));
+        DataLogStats s = dataLogStats();
+        Console.printf("  log.csv                         %6u KB (current)\n", (unsigned)(s.bytes / 1024));
         int count = 0;
         dataLogForEachSaved(printSaved, &count);
         if (!count) Console.println("  (no saved logs)");
-        Console.printf("  %u KB free\n", (unsigned)(dataLogFreeBytes() / 1024));
+        Console.printf("  %u KB free\n", (unsigned)(s.freeBytes / 1024));
     } else if (sub == "mv") {
         int sp = arg.indexOf(' ');
         String err;
@@ -213,7 +216,7 @@ void commandRun(const String& raw) {
         sampleCmd();
     } else if (cmd == "test") {
         if (sub == "on" || sub == "off") setTest(sub == "on");
-        else Console.printf("test mode is %s (test on|off)\n", params().liveDebug ? "on" : "off");
+        else Console.printf("test mode is %s (test on|off)\n", params().testMode ? "on" : "off");
     } else if (cmd == "set" && sub == "sample") {
         long s = arg.toInt();
         if (s >= 1 && s <= 86400) setSampleInterval(s);

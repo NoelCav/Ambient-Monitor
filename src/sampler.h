@@ -19,7 +19,6 @@ void samplerRequestSample();
 struct DustDiag {
     uint32_t frames = 0, errors = 0, bytes = 0;  // in the last LIVE_INTERVAL_MS
     uint32_t intervalMs = 0;                     // between the last two frames
-    PmsFrame last = {};                          // latest single frame
 };
 
 struct SamplerState {

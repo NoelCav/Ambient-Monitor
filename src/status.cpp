@@ -2,7 +2,6 @@
 #include "air_quality.h"
 #include "climate.h"
 #include "config.h"
-#include "data_log.h"
 #include "dust.h"
 #include "health.h"
 #include "params.h"
@@ -11,10 +10,6 @@
 #include <WiFi.h>
 
 static const char* tf(bool b) { return b ? "true" : "false"; }
-
-static String triple(const uint16_t* v) {
-    return "[" + String(v[0]) + "," + String(v[1]) + "," + String(v[2]) + "]";
-}
 
 // The one serializer for a Reading (logged sample and test reading alike).
 // `extra` is appended inside the object (e.g. the test reading's diagnostics).
@@ -36,9 +31,7 @@ static String readingJson(const Reading& r, const String& extra = "") {
 String statusJson() {
     SamplerState s = samplerState();
     DustStatus dust = dustStatus();
-    String diag = ",\"diag\":{\"frames\":" + String(s.diag.frames) + ",\"errors\":" + String(s.diag.errors) +
-                  ",\"bytes\":" + String(s.diag.bytes) + ",\"dt_ms\":" + String(s.diag.intervalMs) +
-                  ",\"pm\":" + triple(s.diag.last.pm) + "}";
+    String diag = ",\"diag\":{\"errors\":" + String(s.diag.errors) + ",\"dt_ms\":" + String(s.diag.intervalMs) + "}";
     String j = "{\"sample\":" + readingJson(s.sample);
     j += ",\"live\":" + readingJson(s.live, diag);
 
@@ -46,16 +39,13 @@ String statusJson() {
     j += ",\"reset\":\"" + String(resetReasonStr()) + "\"";
     j += ",\"heap\":" + String(ESP.getFreeHeap());
     j += ",\"rssi\":" + String(WiFi.RSSI());
-    j += ",\"test\":" + String(tf(params().liveDebug));
+    j += ",\"test\":" + String(tf(params().testMode));
     j += ",\"sample_s\":" + String(params().sampleIntervalS);
     j += ",\"next_sample_s\":" + String(s.nextSampleS);
-    j += ",\"requested\":" + String(tf(s.requested));
-    j += ",\"log_kb\":" + String(dataLogSize() / 1024);
     j += ",\"tasks\":" + tasksJson() + "}";
 
     j += ",\"hw\":{\"climate\":" + String(tf(climateFound())) + ",\"climate_addr\":" + String(climateAddr());
     j += ",\"dust_on\":" + String(tf(dust.on)) + ",\"dust_s\":" + String(dust.awakeMs / 1000);
-    j += ",\"warm_s\":" + String(PMS_WARMUP_MS / 1000);
-    j += ",\"log_ok\":" + String(tf(dataLogMounted())) + ",\"log_free_kb\":" + String(dataLogFreeBytes() / 1024) + "}";
+    j += ",\"warm_s\":" + String(PMS_WARMUP_MS / 1000) + "}";
     return j + "}";
 }

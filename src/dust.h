@@ -18,7 +18,6 @@ struct DustStatus {
     bool fresh = false;        // a frame arrived in the last 5 s
     uint8_t frames = 0;        // frames in the average
     PmsFrame avg = {};         // average of the last PMS_AVG_FRAMES frames
-    PmsFrame last = {};        // most recent single frame
     uint32_t intervalMs = 0;   // time between the last two frames
     uint32_t totalFrames = 0, totalErrors = 0, totalBytes = 0;  // since boot
 };
