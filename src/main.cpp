@@ -153,16 +153,47 @@ const char* pm1Level(uint16_t v) {
 
 // --- Sampling functions (populate SensorReading) ---
 
-void sampleBME280(SensorReading& r) {
-    if (!bmeOk) {
-        bmeOk = bme.begin(0x76) || bme.begin(0x77);
-        if (bmeOk) delay(50);  // let the first conversion complete before reading
-    }
+uint8_t bmeReadRegs(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t len);
 
-    r.temperature = bme.readTemperature();
-    r.humidity = bme.readHumidity();
-    r.pressure = bme.readPressure() / 100.0F;
-    r.bme_valid = !isnan(r.temperature) && !isnan(r.humidity) && !isnan(r.pressure);
+// Find the BME and put it in forced mode with x1 oversampling (Bosch's
+// "weather monitoring" setting): it sleeps between reads and only converts
+// when asked, which avoids the self-heating of the library's default
+// continuous x16 mode.
+uint8_t bmeAddr = 0x76;
+
+bool bmeInit() {
+    if (bme.begin(0x76))      bmeAddr = 0x76;
+    else if (bme.begin(0x77)) bmeAddr = 0x77;
+    else return false;
+    bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                    Adafruit_BME280::SAMPLING_X1,   // temperature
+                    Adafruit_BME280::SAMPLING_X1,   // pressure
+                    Adafruit_BME280::SAMPLING_X1,   // humidity
+                    Adafruit_BME280::FILTER_OFF);
+    return true;
+}
+
+// Trigger one conversion and check it actually happened. The library computes
+// a plausible-looking 23.52 C / 82.4 % / 699 hPa from the chip's power-on
+// register values (raw temp 0x800000), so a chip that resets mid-conversion
+// would otherwise pass as valid.
+bool bmeMeasure() {
+    if (!bme.takeForcedMeasurement()) return false;
+    uint8_t t[3] = {0};
+    if (bmeReadRegs(bmeAddr, 0xFA, t, 3)) return false;
+    return !(t[0] == 0x80 && t[1] == 0 && t[2] == 0);
+}
+
+void sampleBME280(SensorReading& r) {
+    if (!bmeOk) bmeOk = bmeInit();
+
+    r.bme_valid = bmeOk && bmeMeasure();
+    if (r.bme_valid) {
+        r.temperature = bme.readTemperature();
+        r.humidity = bme.readHumidity();
+        r.pressure = bme.readPressure() / 100.0F;
+        r.bme_valid = !isnan(r.temperature) && !isnan(r.humidity) && !isnan(r.pressure);
+    }
     if (!r.bme_valid) bmeOk = false;
 }
 
@@ -348,7 +379,8 @@ void bmeForcedTest(uint8_t addr) {
     Serial.printf("BME forced test: write err %u/%u, ctrl_meas after write=%02X, "
                   "raw P=%02X%02X%02X T=%02X%02X%02X H=%02X%02X (read err %u)%s\n",
         e1, e2, ctrlNow, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], e3,
-        e3 ? "  <-- chip dropped off the bus mid-conversion (power/contact?)"
+        (e1 || e2) ? "  <-- chip not responding at all (wiring/contact?)"
+        : e3 ? "  <-- chip dropped off the bus mid-conversion (power/contact?)"
            : (r[3] == 0x80 && r[4] == 0 && r[5] == 0) ? "  <-- still reset value, no conversion"
            : "  <-- converted");
 }
@@ -369,11 +401,13 @@ void printBmeRaw(uint8_t addr) {
 void runSelfTest() {
     Serial.println("--- Device self-test ---");
 
-    if (bmeOk) {
-        Serial.printf("  BME280 (0x76):  OK (%.1f C, %.0f%%, %.0f hPa)\n",
+    if (bmeOk && !bmeMeasure()) {
+        Serial.println("  BME280:         FOUND, but measurement failed");
+    } else if (bmeOk) {
+        Serial.printf("  BME280:         OK (%.1f C, %.0f%%, %.0f hPa)\n",
             bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F);
     } else {
-        Serial.println("  BME280 (0x76):  NOT FOUND");
+        Serial.println("  BME280:         NOT FOUND");
     }
     Serial.printf("  KY-037 sound:   %d\n", analogRead(PIN_KY037_A));
     Serial.printf("  Photoresistor:  %d\n", analogRead(PIN_PHOTO));
@@ -415,14 +449,15 @@ void setup() {
     }
     Serial.println(found ? "" : " (nothing on bus)");
 
-    bmeOk = bme.begin(0x76) || bme.begin(0x77);
+    // Raw diagnostics first; bmeInit() then soft-resets and configures the chip.
+    dumpBmeCalibration(0x76);
+    bmeForcedTest(0x76);
+    bmeOk = bmeInit();
     if (!bmeOk) {
         Serial.println("WARNING: BME280 not found at 0x76 (will retry while sampling)");
     } else {
-        Serial.println("BME280 initialized");
+        Serial.printf("BME280 initialized at 0x%02X (forced mode, x1)\n", bmeAddr);
     }
-    dumpBmeCalibration(0x76);
-    bmeForcedTest(0x76);
 
     pinMode(PIN_KY037_A, INPUT);
     pinMode(PIN_PHOTO, INPUT);
@@ -521,14 +556,17 @@ void loop() {
                 (now - pmsOnSince) / 1000, (unsigned long)s.bytesReceived);
         }
 
-        if (bmeOk) {
-            printBmeRaw(0x76);
+        if (bmeOk && bmeMeasure()) {
             Serial.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | sound avg=%ld p2p=%d | light=%ld\n",
                 bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F,
                 soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
                 lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
         } else {
-            Serial.printf("[ENV] BME not found | sound avg=%ld p2p=%d | light=%ld\n",
+            // Raw registers only on failure: shows whether the chip is asleep,
+            // stuck at reset values, or gone from the bus.
+            if (bmeOk) printBmeRaw(bmeAddr);
+            Serial.printf("[ENV] BME %s | sound avg=%ld p2p=%d | light=%ld\n",
+                bmeOk ? "measurement failed" : "not found",
                 soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
                 lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
         }
