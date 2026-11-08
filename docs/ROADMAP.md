@@ -20,9 +20,8 @@ Not scheduled; roughly in order of interest. Hardware items are in HARDWARE.md.
 ## Firmware
 - **Updates from GitHub Releases:** the device checks for and installs a newer build itself (the rollback guard already protects against a bad one).
 - **Multiple monitors:**
-  - OTA upload script: build once, find every monitor on the network by its mDNS `_arduino._tcp` advertisement (via `zeroconf`), list them with Device ID and firmware build, and upload to the chosen ones (or all). This replaces the name hard-coded in `platformio.ini`.
   - Give each device a unique Device ID.
 - **Portal password** for write actions (HTTP basic auth on `/cmd` and `/save`), if the network ever isn't trusted.
 
 ## Done (for reference)
-- FreeRTOS restructure, continuous-ADC sound (RMS), watchdog, firmware rollback, status LED, saved WiFi list, saved/archived logs, graphs, PM2.5 indoor estimate (ALT-CF3), host unit tests.
+- OTA upload script that finds monitors on the network (`scripts/ota.py`), FreeRTOS restructure, continuous-ADC sound (RMS), watchdog, firmware rollback, status LED, saved WiFi list, saved/archived logs, graphs, PM2.5 indoor estimate (ALT-CF3), host unit tests.

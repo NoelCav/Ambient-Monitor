@@ -52,7 +52,13 @@ static void startMdns() {
     String host = mdnsHostname();
     if (MDNS.begin(host.c_str())) {
         MDNS.addService("http", "tcp", 80);
-        MDNS.addService("arduino", "tcp", 3232);  // OTA, for IDE discovery
+        // OTA, found by scripts/ota.py and the Arduino IDE. The TXT records
+        // say which monitor it is and what it runs.
+        MDNS.addService("arduino", "tcp", 3232);
+        MDNS.addServiceTxt("arduino", "tcp", "board", "esp32s3");
+        MDNS.addServiceTxt("arduino", "tcp", "auth_upload", "yes");
+        MDNS.addServiceTxt("arduino", "tcp", "device_id", params().deviceId.c_str());
+        MDNS.addServiceTxt("arduino", "tcp", "build", __DATE__ " " __TIME__);
         MDNS.addService("telnet", "tcp", CONSOLE_TCP_PORT);
         Console.printf("mDNS: reachable at http://%s.local\n", host.c_str());
     } else {

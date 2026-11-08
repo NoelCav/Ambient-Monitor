@@ -5,7 +5,9 @@ Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 
 
 ## Build / flash
 - **PlatformIO**, Arduino framework (core 3.x), board `esp32-s3-devkitc-1`. CLI at `~/.platformio/penv/Scripts/pio.exe` on the user's desktop.
-- `pio run` builds. `pio run -t upload --upload-port COM3` flashes over USB. **`pio run -e ota -t upload`** flashes over WiFi to `esp32-ambient-01.local` (needs `secrets.ini`, see Credentials).
+- `pio run` builds. `pio run -t upload --upload-port COM3` flashes over USB. Over WiFi (both need `secrets.ini`, see Credentials):
+  - **`python scripts/ota.py`** builds, finds every monitor on the network by its mDNS `_arduino._tcp` advertisement (TXT: `device_id`, `build`), lists them and updates the ones you pick (`--list`, `--all`, `--no-build`). Standard library only: the `zeroconf` package's compiled DLLs are blocked by Windows Application Control on this PC.
+  - `pio run -e ota -t upload` flashes `esp32-ambient-01.local` by name (kept as a fallback).
 - Pins and runtime defaults live in `src/config.h`. `platformio.ini` holds board/toolchain config and pins the partition table (`default_8MB.csv`); don't change it, because the data log lives on its `spiffs` partition.
 - On this board, opening the USB serial port can reset the ESP32. Use the network console instead when possible.
 

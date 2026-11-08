@@ -6,7 +6,8 @@ PlatformIO, Arduino framework on FreeRTOS. Copy `src/secrets.h.example` to `src/
 
 ```text
 pio run -t upload --upload-port COM3   # first flash, over USB
-pio run -e ota -t upload               # later flashes, over WiFi
+python scripts/ota.py                  # later flashes, over WiFi: finds monitors, you pick
+pio run -e ota -t upload               # same, to esp32-ambient-01.local by name
 pio test -e native                     # host unit tests
 ```
 
