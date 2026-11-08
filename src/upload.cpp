@@ -45,16 +45,25 @@ static String post(const String& csv) {
     WiFiClientSecure tls;
     tls.setInsecure();  // no certificate check: Google rotates certificates, and the data isn't secret
     HTTPClient http;
-    // Apps Script answers a POST with a redirect to the response; following it
-    // (as a GET) returns what doPost produced.
-    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     http.setConnectTimeout(10000);
     http.setTimeout(20000);
     if (!http.begin(tls, url)) return "bad URL";
     http.addHeader("Content-Type", "text/csv");
+    const char* keep[] = {"Location"};
+    http.collectHeaders(keep, 1);
     taskWatchdogPause();  // TLS + Google can take longer than WATCHDOG_S
     int code = http.POST(csv);
-    String body = code > 0 ? http.getString() : "";
+    String body;
+    // Apps Script runs doPost, then redirects (302) to a page holding its
+    // output, which must be fetched with a GET. HTTPClient's redirect
+    // following would re-send the POST there (rejected with 400/405), so the
+    // redirect is followed here.
+    if (code == 302 || code == 303) {
+        String loc = http.header("Location");
+        http.end();
+        if (http.begin(tls, loc)) code = http.GET();
+    }
+    if (code > 0) body = http.getString();
     taskWatchdogResume();
     http.end();
     if (code != 200) return "HTTP " + String(code);
