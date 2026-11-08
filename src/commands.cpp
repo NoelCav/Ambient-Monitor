@@ -1,8 +1,15 @@
 #include "commands.h"
+#include "climate.h"
+#include "config.h"
 #include "console.h"
 #include "data_log.h"
-#include "device.h"
+#include "dust.h"
+#include "health.h"
 #include "params.h"
+#include "sampler.h"
+#include "tasks.h"
+#include "wifi_manager.h"
+#include <WiFi.h>
 #include <time.h>
 
 static const char* const HELP =
@@ -10,12 +17,12 @@ static const char* const HELP =
     "dust = particles (PMS5003), sound, light.\n"
     "\n"
     "READINGS\n"
-    "  status                    uptime, WiFi, mode, dust sensor state, next sample, log size\n"
-    "  read [what]               current values right now, not logged.\n"
+    "  status                    uptime, WiFi, mode, sensors, next sample, log, task stacks\n"
+    "  read [what]               the latest test reading (refreshed every 5 s), not logged.\n"
     "                            what: all (default) | climate | dust | sound | light\n"
     "                            e.g.  read        read dust\n"
-    "                            dust is only available while the sensor is awake;\n"
-    "                            use 'sample' or test mode to wake it.\n"
+    "                            dust needs the sensor awake: 'sample' or test mode.\n"
+    "                            sound = RMS avg / loudest 125 ms, light = mean (0-4095)\n"
     "  sample                    take one logged sample. If the dust sensor is asleep\n"
     "                            it wakes, warms up (~90 s), then samples. The regular\n"
     "                            interval restarts from this sample.\n"
@@ -53,6 +60,58 @@ static const char* const HELP =
     "  curl \"http://<device>.local/cmd?c=read%20dust\"\n";
 
 static unsigned long rebootAt = 0;  // 0 = none pending
+
+static void printStatus() {
+    SamplerState s = samplerState();
+    DustStatus d = dustStatus();
+    Console.printf("uptime %lu s, reset: %s, heap %u KB\n",
+        millis() / 1000, resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024));
+    Console.printf("wifi: %s, ip %s, rssi %d dBm\n", wifiConnected() ? "connected" : "disconnected",
+        WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+    Console.printf("mode: %s, sample every %u s, next in %lu s%s\n", params().liveDebug ? "test" : "normal",
+        (unsigned)params().sampleIntervalS, (unsigned long)s.nextSampleS, s.requested ? " (sample requested)" : "");
+    Console.printf("climate: %s, dust: %s", climateFound() ? "ok" : "not found", d.on ? "awake" : "asleep");
+    if (d.on) Console.printf(" %lu s%s", (unsigned long)(d.awakeMs / 1000), d.awakeMs < PMS_WARMUP_MS ? " (warming up)" : "");
+    Console.println();
+    Console.printf("log: %u KB, %u KB free\n", (unsigned)(dataLogSize() / 1024), (unsigned)(dataLogFreeBytes() / 1024));
+    tasksPrint(Console);
+}
+
+static void readCmd(const String& what) {
+    if (what != "" && what != "all" && what != "climate" && what != "dust" && what != "sound" && what != "light") {
+        Console.println("read what? all | climate | dust | sound | light");
+        return;
+    }
+    Reading r = samplerState().live;
+    if (!r.at_ms) {
+        Console.println("no reading yet (first one comes within 5 s of boot)");
+        return;
+    }
+    Console.println(readingText(r, what == "" ? "all" : what.c_str()));
+}
+
+static void sampleCmd() {
+    samplerRequestSample();
+    DustStatus d = dustStatus();
+    if (d.on && d.awakeMs >= PMS_WARMUP_MS) Console.println("sample: dust sensor is warm, sampling now");
+    else Console.printf("sample: %s the dust sensor, sampling in ~%lu s\n", d.on ? "warming up" : "waking",
+        (unsigned long)((PMS_WARMUP_MS - (d.on ? d.awakeMs : 0)) / 1000));
+}
+
+static void setTest(bool on) {
+    Params p = params();
+    p.liveDebug = on;
+    paramsSave(p);
+    Console.printf("test mode %s%s\n", on ? "on" : "off",
+        on ? "" : " (the dust sensor sleeps until 90 s before each sample)");
+}
+
+static void setSampleInterval(uint32_t seconds) {
+    Params p = params();
+    p.sampleIntervalS = seconds;
+    paramsSave(p);
+    Console.printf("sample interval %u s\n", (unsigned)params().sampleIntervalS);
+}
 
 static void printSaved(const String& name, size_t bytes, void* ctx) {
     Console.printf("  saved/%-31s %6u KB\n", (name + ".csv").c_str(), (unsigned)((bytes + 1023) / 1024));
@@ -147,23 +206,23 @@ void commandRun(const String& raw) {
     if (cmd == "help" || cmd == "?") {
         Console.print(HELP);
     } else if (cmd == "status") {
-        devPrintStatus();
+        printStatus();
     } else if (cmd == "read") {
-        if (!devRead(sub)) Console.println("read what? all | climate | dust | sound | light");
+        readCmd(sub);
     } else if (cmd == "sample") {
-        devRequestSample();
+        sampleCmd();
     } else if (cmd == "test") {
-        if (sub == "on" || sub == "off") devSetTestMode(sub == "on");
+        if (sub == "on" || sub == "off") setTest(sub == "on");
         else Console.printf("test mode is %s (test on|off)\n", params().liveDebug ? "on" : "off");
     } else if (cmd == "set" && sub == "sample") {
         long s = arg.toInt();
-        if (s >= 1 && s <= 86400) devSetSampleInterval(s);
+        if (s >= 1 && s <= 86400) setSampleInterval(s);
         else Console.println("usage: set sample <1-86400 seconds>");
     } else if (cmd == "log") {
         cmdLog(sub, arg);
     } else if (cmd == "diag") {
-        if (sub == "climate") devDiagClimate();
-        else if (sub == "i2c") devI2cScan();
+        if (sub == "climate") climateDiag();
+        else if (sub == "i2c") i2cScan();
         else Console.println("diag what? climate | i2c");
     } else if (cmd == "reboot") {
         Console.println("rebooting in 1 s...");

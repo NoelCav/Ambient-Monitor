@@ -76,7 +76,12 @@ static void startOta() {
     ArduinoOTA.setHostname(mdnsHostname().c_str());
     ArduinoOTA.setPassword(OTA_PASSWORD);
     ArduinoOTA.setMdnsEnabled(false);
-    ArduinoOTA.onStart([] { Console.println("OTA: update starting"); });
+    // The upload blocks loop() for its whole duration, so the loop task leaves
+    // the watchdog while it runs (and rejoins if it fails).
+    ArduinoOTA.onStart([] {
+        disableLoopWDT();
+        Console.println("OTA: update starting");
+    });
     ArduinoOTA.onProgress([](unsigned done, unsigned total) {
         static unsigned lastPct = 100;
         unsigned pct = total ? done * 100 / total : 0;
@@ -84,7 +89,10 @@ static void startOta() {
         lastPct = pct;
     });
     ArduinoOTA.onEnd([] { Console.println("OTA: done, rebooting"); });
-    ArduinoOTA.onError([](ota_error_t e) { Console.printf("OTA: error %u\n", (unsigned)e); });
+    ArduinoOTA.onError([](ota_error_t e) {
+        Console.printf("OTA: error %u\n", (unsigned)e);
+        enableLoopWDT();
+    });
     ArduinoOTA.begin();
     Console.println("OTA: listening on port 3232");
 }

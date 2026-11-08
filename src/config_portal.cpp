@@ -4,12 +4,12 @@
 #include "params.h"
 #include "data_log.h"
 #include "commands.h"
+#include "status.h"
 #include <WebServer.h>
 #include <LittleFS.h>
 
 static WebServer server(80);
 
-extern String statusJson();  // defined in main.cpp
 
 // HTML escape for safe insertion into text and (either-quoted) attribute values.
 static String esc(const String& s) {
@@ -165,47 +165,50 @@ function presQ(p){return [band([[980,'Storm likely'],[1000,'Low, unsettled'],[10
 var PM25=[[9,'Good'],[35.4,'Moderate'],[55.4,'Unhealthy for sensitive'],[125.4,'Unhealthy'],[225.4,'Very unhealthy'],[1e9,'Hazardous']];
 var PM10=[[54,'Good'],[154,'Moderate'],[254,'Unhealthy for sensitive'],[354,'Unhealthy'],[424,'Very unhealthy'],[1e9,'Hazardous']];
 function pmQ(B,v){return [band(B,v),grad([[B[0][0],GREEN],[B[1][0],YEL],[B[2][0],ORG],[B[3][0],RED],[B[4][0],PUR]],v)]}
-// Sound (1 s peak-to-peak): quiet room ~10 green, TV ~20-40, clap 500+ red.
-function sndQ(v){return [band([[19,'Quiet'],[99,'Some noise'],[399,'Loud'],[1e9,'Very loud']],v),grad([[12,GREEN],[60,YEL],[400,RED]],v)]}
+// Sound (RMS of the mic signal, ADC counts): quiet room green -> loud red.
+// Thresholds from bench measurements; see SOUND_* notes in CLAUDE.md.
+function sndQ(v){return [band([[SQ[0],'Quiet'],[SQ[1],'Some noise'],[SQ[2],'Loud'],[1e9,'Very loud']],v),grad([[SQ[0],GREEN],[SQ[1],YEL],[SQ[2],RED]],v)]}
+var SQ=[4,15,60];
 // Light: dark grey (dark) -> yellow (bright). Not good or bad.
 function lightQ(v){return [band([[400,'Dark'],[1000,'Dim'],[2000,'Indoor lighting'],[3000,'Bright indoor'],[4094,'Bright'],[1e9,'Saturated']],v),grad([[0,'#4b5563'],[4095,'#eab308']],v),1]}
-// The nine reading tiles shared by Last sample and Test readings.
-function readings(e,pm,sa,sp,li){
- var t=e?tile('Temperature',(e[0]*9/5+32).toFixed(1),'°F',[e[0].toFixed(1)+' °C · '+tempQ(e[0])[0],tempQ(e[0])[1]])+
-  tile('Humidity',e[1].toFixed(0),'%',humQ(e[1]))+tile('Pressure',e[2].toFixed(0),'hPa',presQ(e[2]))
+// The nine reading tiles for one Reading (status.json "sample" or "live").
+// dustMsg is shown in the PM tiles when the dust sensor has no data.
+function readings(r,dustMsg){
+ var c=r.climate,u=r.dust,t;
+ t=c.ok?tile('Temperature',(c.temp*9/5+32).toFixed(1),'°F',[c.temp.toFixed(1)+' °C · '+tempQ(c.temp)[0],tempQ(c.temp)[1]])+
+  tile('Humidity',c.hum.toFixed(0),'%',humQ(c.hum))+tile('Pressure',c.pres.toFixed(0),'hPa',presQ(c.pres))
   :none(['Temperature','Humidity','Pressure'],'No reading');
- t+=pm?(pm[3]!=null?tile('PM2.5 est. (raw '+pm[1]+')',Math.round(pm[3]),UG,pmQ(PM25,pm[3])):tile('PM2.5',pm[1],UG,pmQ(PM25,pm[1])))+tile('PM1.0',pm[0],UG,pmQ(PM25,pm[0]))+tile('PM10',pm[2],UG,pmQ(PM10,pm[2]))
-  :none(['PM2.5','PM1.0','PM10'],pm===0?'Warming up':'No reading');
- t+=sa==null?none(['Sound avg','Sound peak','Light'],''):
-  tile('Sound avg',sa,'',sndQ(sa))+tile('Sound peak',sp,'',sndQ(sp))+tile('Light',li,'/ 4095',lightQ(li));
+ t+=u.ok?tile('PM2.5 est. (raw '+u.pm[1]+')',Math.round(u.est),UG,pmQ(PM25,u.est))+tile('PM1.0',u.pm[0],UG,pmQ(PM25,u.pm[0]))+tile('PM10',u.pm[2],UG,pmQ(PM10,u.pm[2]))
+  :none(['PM2.5','PM1.0','PM10'],dustMsg);
+ t+=tile('Sound avg',r.sound.avg.toFixed(1),'',sndQ(r.sound.avg))+tile('Sound peak',r.sound.peak.toFixed(1),'',sndQ(r.sound.peak))+tile('Light',r.light,'/ 4095',lightQ(r.light));
  return grid(t)}
 // Device-detail tiles are plain; only real problems get an outline.
 var RESET={poweron:'Power connected',software:'Restart or update',panic:'Crash (see console)',
  brownout:'Power dipped',task_wdt:'Watchdog: code hung',int_wdt:'Watchdog: code hung',wdt:'Watchdog: code hung',
  external:'Reset button',usb:'Reset over USB',deepsleep:'Woke from sleep'};
 function render(d){
- var s=d.sys,h=d.hw,L=d.live,b=d.bme,p=d.pms,B=d.boot,t;last=d;
- testOn=s.live_debug;$('tsw').classList.toggle('on',testOn);set('tlab',testOn?'On':'Off');
+ var s=d.sys,h=d.hw,S=d.sample,L=d.live,t;last=d;
+ testOn=s.test;$('tsw').classList.toggle('on',testOn);set('tlab',testOn?'On':'Off');
  set('upd','updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'}));
- // Last sample: always what was written to the log. Before the first sample,
- // the boot self-test readings stand in, under a warning.
- if(d.have_sample){$('cwarn').classList.add('hide');
-  $('curb').innerHTML=readings(b.valid?[b.temp,b.hum,b.pres]:null,p.valid?[p.pm1,p.pm25,p.pm10,p.est]:null,d.sound.avg,d.sound.peak,d.light.adc);
-  set('src','Written to the log '+dur(d.age_s)+' ago · next in '+dur(s.next_sample_s)+'. Sound covers the whole interval. PM2.5 est. is an indoor correction (ALT-CF3); the log and graphs keep raw values.')}
- else{msg('cwarn','Not saved yet. These are the startup self-test readings. First sample in '+dur(s.next_sample_s)+', once the dust sensor has warmed up.');
-  $('curb').innerHTML=readings(B&&B.bme_ok?[B.temp,B.hum,B.pres]:null,0,B?B.sound:null,B?B.sound:null,B?B.light:null);
+ var dustMsg=h.dust_on?(h.dust_s<h.warm_s?'Warming up':'No frames'):'Sensor asleep';
+ // Last sample: always what was written to the log. Before the first one,
+ // the current readings stand in, under a warning.
+ if(S){$('cwarn').classList.add('hide');
+  $('curb').innerHTML=readings(S,'No reading');
+  set('src','Written to the log '+dur(S.age_s)+' ago · next in '+dur(s.next_sample_s)+'. Sound and light cover the whole interval. PM2.5 est. is an indoor correction (ALT-CF3); the log and graphs keep raw values.')}
+ else{msg('cwarn','Not saved yet. These are the current readings. First sample in '+dur(s.next_sample_s)+', once the dust sensor has warmed up.');
+  $('curb').innerHTML=L?readings(L,dustMsg):'<div class="muted">Starting…</div>';
   set('src','')}
  // Test readings: the same tiles, measured the same way over the last 5 s.
- if(L){var P=L.pms,c=P.cnt;
-  $('tstb').innerHTML=readings(L.bme.ok?[L.bme.temp,L.bme.hum,L.bme.pres]:null,P.n?P.avg.concat([P.est]):null,L.sound.avg,L.sound.peak,L.light)+
-   '<div class="muted">Last 5 s, measured the same way as a sample (PM averaged over the last '+P.n+' frames). Updated '+L.age_s+' s ago.</div>';
-  t=tile('Dust sensor',dur(P.t_s),'awake',P.t_s<30?['Warming up',YEL]:['Stable',GREEN]);
-  t+=tile('Frame interval',P.ok?P.dt_ms:'–','ms',!P.ok?['No frames',RED]:P.dt_ms<600||P.dt_ms>2500?['Unusual',YEL]:['Normal',null]);
-  t+=tile('Frame errors',P.bad,'in 5 s',P.bad?['Check wiring',RED]:['None',null]);
+ if(testOn&&L){var u=L.dust,g=L.diag,c=u.cnt;
+  $('tstb').innerHTML=readings(L,dustMsg)+'<div class="muted">Last 5 s, measured the same way as a sample. Updated '+L.age_s+' s ago.</div>';
+  t=tile('Dust sensor',dur(u.awake_s),'awake',u.awake_s<30?['Warming up',YEL]:['Stable',GREEN]);
+  t+=tile('Frame interval',u.ok?g.dt_ms:'–','ms',!u.ok?['No frames',RED]:g.dt_ms<600||g.dt_ms>2500?['Unusual',YEL]:['Normal',null]);
+  t+=tile('Frame errors',g.errors,'in 5 s',g.errors?['Check wiring',RED]:['None',null]);
   t+=tile('> 0.3 µm',c[0],'per 0.1 L',['Smoke, cooking',null])+tile('> 1.0 µm',c[2],'per 0.1 L',['Fine dust',null]);
   t+=tile('> 2.5 µm',c[3],'per 0.1 L',['Dust, pollen',null])+tile('> 5 µm',c[4],'per 0.1 L',['Large dust',null]);
-  t+=tile('> 10 µm',c[5],'per 0.1 L',['Sensor sees few',null])+tile('PM2.5 (CF=1)',P.cf1[1],UG,['Factory calibration',null]);
-  $('dia-b').innerHTML=grid(t)+'<div class="muted">Latest frame. Updated '+L.age_s+' s ago.</div>'}
+  t+=tile('> 10 µm',c[5],'per 0.1 L',['Sensor sees few',null])+tile('PM2.5 (CF=1)',u.cf1[1],UG,['Factory calibration',null]);
+  $('dia-b').innerHTML=grid(t)+'<div class="muted">Counts and CF=1 averaged over the last '+u.n+' frames. Updated '+L.age_s+' s ago.</div>'}
  else{$('tstb').innerHTML='<div class="muted">'+(testOn?'Starting: values appear within 5 s.':'Off. Turn on to keep the dust sensor awake and see readings every 5 s.')+'</div>';
   $('dia-b').innerHTML=grid(tile('Dust sensor',h.dust_on?dur(h.dust_s):'Asleep',h.dust_on?'awake':'',
    [h.dust_on?(h.dust_s<30?'Warming up':'Stable'):'Wakes '+h.warm_s+' s before a sample',null]))+
@@ -217,6 +220,8 @@ function render(d){
  t+=tile('WiFi',s.rssi,'dBm',s.rssi>=-70?[s.rssi>=-60?'Strong':'Good',null]:s.rssi>=-80?['Weak',YEL]:['Very weak',RED]);
  t+=tile('Last reset',s.reset,'',[RESET[s.reset]||'',/brownout|panic|wdt/.test(s.reset)?RED:null]);
  t+=tile('Free memory',Math.round(s.heap/1024),'KB',s.heap<40000?['Low',YEL]:null);
+ var low=s.tasks.filter(function(k){return k.stack_free<512});
+ t+=tile('Task stacks',low.length?low.length+' low':'OK','',low.length?[low.map(function(k){return k.name}).join(', '),YEL]:[s.tasks.length+' tasks',null]);
  $('devb').innerHTML=grid(t);
 }
 function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
@@ -227,7 +232,7 @@ function setTest(on){
  if(!open.tst)tog('tst');
  cmd('test '+(on?'on':'off')).then(function(){
   msg('tmsg',on?'Test mode on. Dust sensor waking; readings settle in about 30 s.':
-   'Test mode off. Dust sensor stays on until the next sample'+(last?' (in '+dur(last.sys.next_sample_s)+')':'')+', then sleeps.');
+   'Test mode off. Dust sensor sleeps until '+(last?last.hw.warm_s:90)+' s before the next sample'+(last?' (in '+dur(last.sys.next_sample_s)+')':'')+'.');
   setTimeout(function(){msg('tmsg','')},15000);tick()})}
 function sampleNow(){msg('dmsg','Requesting a sample…');
  cmd('sample').then(function(x){msg('dmsg',x.trim()||'Sample requested.');tick()})}
@@ -306,7 +311,7 @@ var SER=[
  {t:'PM2.5',u:UG,d:0,l:[function(r){return r.pm2_5},est],n:['raw','est.']},
  {t:'PM1.0',u:UG,d:0,l:[function(r){return r.pm1_0}]},
  {t:'PM10',u:UG,d:0,l:[function(r){return r.pm10}]},
- {t:'Sound',u:'',d:0,l:[function(r){return r.sound_avg_p2p},function(r){return isNaN(r.sound_peak_p2p)?r.sound_p2p_max:r.sound_peak_p2p}],n:['avg','peak']},
+ {t:'Sound',u:'',d:1,l:[function(r){return r.sound_avg_rms},function(r){return r.sound_peak_rms}],n:['avg','peak']},
  {t:'Light',u:'/ 4095',d:0,l:[function(r){return r.light}]}];
 var COL=['#2563eb','#dc2626'];
 function tfmt(e){return new Date(e*1000).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}

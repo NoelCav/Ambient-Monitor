@@ -33,7 +33,7 @@ void paramsLoad() {
 
     Console.printf("Params: device=%s ssid=%s sample=%us live_debug=%s\n",
         g_params.deviceId.c_str(), g_params.wifiSsid.c_str(),
-        g_params.sampleIntervalS, g_params.liveDebug ? "on" : "off");
+        (unsigned)g_params.sampleIntervalS, g_params.liveDebug ? "on" : "off");
 }
 
 void paramsSave(const Params& in) {

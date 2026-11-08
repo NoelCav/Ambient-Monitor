@@ -56,14 +56,19 @@
 #define DEFAULT_LIVE_DEBUG true
 #endif
 
-// --- Timing (hardware constants) ---
+// --- Timing and measurement ---
 #ifndef PMS_WARMUP_MS
-#define PMS_WARMUP_MS 90000  // 90s warmup before sampling (cold-start stabilization)
+#define PMS_WARMUP_MS 90000  // dust sensor on this long before each sample (datasheet: stable after 30 s)
 #endif
+#define PMS_AVG_FRAMES 10        // dust readings average the last 10 frames (~10 s)
+#define LIVE_INTERVAL_MS 5000    // test reading (and [TEST] console line) period
+#define ADC_SAMPLE_HZ 20000      // continuous ADC, shared by sound and light (10 kHz each)
+#define SOUND_WINDOW_MS 125      // sound RMS window ("fast" sound-meter time constant)
+#define WATCHDOG_S 30            // a task silent this long reboots the device
 
 // --- Persistent data log (LittleFS, survives firmware uploads) ---
-// log.csv is archived to saved/archive-<time>.csv at this size. ~130 bytes/row:
-// 512 KB ~= 4000 rows ~= 28 days at the 10-min default, ~11 h at 10 s.
+// log.csv is archived to saved/archive-full-<time>.csv at this size. ~110 bytes
+// per row: 512 KB ~= 4700 rows ~= 33 days at the 10-min default.
 #ifndef LOG_MAX_BYTES
 #define LOG_MAX_BYTES (512 * 1024)
 #endif

@@ -1,7 +1,9 @@
 #pragma once
-#include "sensor_reading.h"
+#include <Arduino.h>
+#include "reading.h"
 
-// Persistent CSV log on the LittleFS data partition. Firmware uploads only
+// Persistent CSV log on the LittleFS data partition. Thread-safe: every
+// function holds one mutex (the sampler appends while the portal reads). Firmware uploads only
 // rewrite the app partition, so the log survives reflashing; it is lost only
 // on `pio run -t uploadfs`, a full chip erase, or a partition-table change.
 //
@@ -13,7 +15,7 @@
 
 void dataLogSetup();
 
-void dataLogAppend(const SensorReading& r);
+void dataLogAppend(const Reading& r);
 
 // Bytes used by the current log file (0 if not mounted).
 size_t dataLogSize();

@@ -3,6 +3,7 @@
 #include "config.h"
 #include "params.h"
 #include "health.h"
+#include "tasks.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <time.h>
@@ -17,10 +18,36 @@ static const char* const HEADER =
     "epoch,uptime_s,boot,reset,device_id,"
     "temp_c,humidity_pct,pressure_hpa,"
     "pm1_0,pm2_5,pm10,pm1_0_cf1,pm2_5_cf1,pm10_cf1,pms_awake_s,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
-    "sound_avg_p2p,sound_peak_p2p,light\n";
+    "sound_avg_rms,sound_peak_rms,light\n";
 
 static bool mounted = false;
+// The sampler task appends while the loop task (portal, console) saves,
+// renames and lists: every public function holds this mutex. Internal helpers
+// (rowCount, rotate, archive ...) assume it is already held.
+static SemaphoreHandle_t mtx;  // created in dataLogSetup(), before any task starts
 static uint32_t bootCount = 0;
+
+static size_t fileSize(const char* path) {
+    File f = LittleFS.open(path, FILE_READ);
+    if (!f) return 0;
+    size_t n = f.size();
+    f.close();
+    return n;
+}
+
+// Data rows in log.csv (lines minus the header).
+static size_t rowCount() {
+    File f = LittleFS.open(DATA_LOG_PATH, FILE_READ);
+    if (!f) return 0;
+    size_t lines = 0;
+    uint8_t buf[512];
+    size_t n;
+    while ((n = f.read(buf, sizeof(buf))) > 0) {
+        for (size_t i = 0; i < n; i++) if (buf[i] == '\n') lines++;
+    }
+    f.close();
+    return lines ? lines - 1 : 0;
+}
 
 static void writeHeaderIfEmpty() {
     if (LittleFS.exists(DATA_LOG_PATH)) return;
@@ -125,6 +152,8 @@ static void rotateIfHeaderChanged() {
 }
 
 void dataLogSetup() {
+    mtx = xSemaphoreCreateMutex();
+    Guard g(mtx);
     // Partition label "spiffs" is the data partition in the default tables.
     // formatOnFail=true only formats when mounting fails (first boot ever).
     mounted = LittleFS.begin(true, "/littlefs", 10, "spiffs");
@@ -146,28 +175,26 @@ void dataLogSetup() {
     rotateIfHeaderChanged();
     writeHeaderIfEmpty();
     Console.printf("DataLog: mounted, boot #%u, %u bytes used of %u\n",
-        bootCount, (unsigned)dataLogSize(), (unsigned)LittleFS.totalBytes());
+        (unsigned)bootCount, (unsigned)fileSize(DATA_LOG_PATH), (unsigned)LittleFS.totalBytes());
 }
 
 bool dataLogMounted() { return mounted; }
 
 size_t dataLogSize() {
-    if (!mounted) return 0;
-    File f = LittleFS.open(DATA_LOG_PATH, FILE_READ);
-    if (!f) return 0;
-    size_t n = f.size();
-    f.close();
-    return n;
+    Guard g(mtx);
+    return mounted ? fileSize(DATA_LOG_PATH) : 0;
 }
 
 void dataLogClear() {
+    Guard g(mtx);
     if (!mounted) return;
     LittleFS.remove(DATA_LOG_PATH);
     writeHeaderIfEmpty();
     Console.println("DataLog: cleared");
 }
 
-void dataLogAppend(const SensorReading& r) {
+void dataLogAppend(const Reading& r) {
+    Guard g(mtx);
     if (!mounted) return;
     rotateIfNeeded();
 
@@ -177,21 +204,22 @@ void dataLogAppend(const SensorReading& r) {
 
     // Invalid sensors leave their columns empty rather than logging zeros.
     char env[48] = ",,";
-    if (r.bme_valid) {
-        snprintf(env, sizeof(env), "%.2f,%.1f,%.1f", r.temperature, r.humidity, r.pressure);
+    if (r.climate.ok) {
+        snprintf(env, sizeof(env), "%.2f,%.1f,%.1f", r.climate.temp, r.climate.hum, r.climate.pres);
     }
     char pm[128] = ",,,,,,,,,,,,";
-    if (r.pms_valid) {
+    if (r.dustOk) {
+        const PmsFrame& d = r.dust;
         snprintf(pm, sizeof(pm), "%u,%u,%u,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u",
-            r.pm1_0, r.pm2_5, r.pm10, r.pm1_0_cf1, r.pm2_5_cf1, r.pm10_cf1, (unsigned long)r.pms_awake_s,
-            r.cnt_0_3, r.cnt_0_5, r.cnt_1_0, r.cnt_2_5, r.cnt_5_0, r.cnt_10);
+            d.pm[0], d.pm[1], d.pm[2], d.cf1[0], d.cf1[1], d.cf1[2], (unsigned long)r.dustAwakeS,
+            d.cnt[0], d.cnt[1], d.cnt[2], d.cnt[3], d.cnt[4], d.cnt[5]);
     }
 
     char line[256];
-    int n = snprintf(line, sizeof(line), "%s,%lu,%u,%s,%s,%s,%s,%d,%d,%d\n",
+    int n = snprintf(line, sizeof(line), "%s,%lu,%u,%s,%s,%s,%s,%.1f,%.1f,%.0f\n",
         synced ? String((long)now).c_str() : "",
-        r.timestamp_ms / 1000, bootCount, resetReasonStr(), params().deviceId.c_str(),
-        env, pm, r.sound_avg, r.sound_peak, r.light);
+        (unsigned long)(r.at_ms / 1000), (unsigned)bootCount, resetReasonStr(), params().deviceId.c_str(),
+        env, pm, r.soundAvg, r.soundPeak, r.light);
 
     File f = LittleFS.open(DATA_LOG_PATH, FILE_APPEND);
     if (!f) {
@@ -219,18 +247,11 @@ String dataLogSavedPath(const String& name) {
     return String(DATA_LOG_SAVED_DIR) + "/" + name + ".csv";
 }
 
-static size_t fileSize(const char* path) {
-    File f = LittleFS.open(path, FILE_READ);
-    if (!f) return 0;
-    size_t n = f.size();
-    f.close();
-    return n;
-}
-
 // Copy log.csv (header always included) to saved/<name>.csv. lastRows > 0
 // keeps only the last N rows; sinceEpoch > 0 keeps only rows stamped at or
 // after that time (rows without a clock time are skipped). Both 0 = whole log.
 bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String& err) {
+    Guard g(mtx);
     if (!mounted) { err = "log storage not mounted"; return false; }
     String name = dataLogSanitizeName(rawName);
     if (name.length() == 0) { err = "name must contain letters or digits"; return false; }
@@ -248,7 +269,7 @@ bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String
 
     size_t skip = 0;
     if (lastRows) {
-        size_t rows = dataLogRowCount();
+        size_t rows = rowCount();
         skip = rows > lastRows ? rows - lastRows : 0;
     }
 
@@ -285,6 +306,7 @@ bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String
 
 bool dataLogRenameSaved(const String& rawFrom, const String& rawTo, String& err) {
     String from = dataLogSanitizeName(rawFrom), to = dataLogSanitizeName(rawTo);
+    Guard g(mtx);
     if (!mounted) { err = "log storage not mounted"; return false; }
     if (!from.length() || !LittleFS.exists(dataLogSavedPath(from))) { err = "no saved log '" + from + "'"; return false; }
     if (!to.length()) { err = "new name must contain letters or digits"; return false; }
@@ -296,10 +318,12 @@ bool dataLogRenameSaved(const String& rawFrom, const String& rawTo, String& err)
 
 bool dataLogRemoveSaved(const String& rawName) {
     String name = dataLogSanitizeName(rawName);
+    Guard g(mtx);
     return mounted && name.length() && LittleFS.remove(dataLogSavedPath(name));
 }
 
 void dataLogForEachSaved(void (*fn)(const String& name, size_t bytes, void* ctx), void* ctx) {
+    Guard g(mtx);
     if (!mounted) return;
     File dir = LittleFS.open(DATA_LOG_SAVED_DIR);
     if (!dir || !dir.isDirectory()) return;
@@ -314,24 +338,16 @@ size_t dataLogFreeBytes() {
     return mounted ? LittleFS.totalBytes() - LittleFS.usedBytes() : 0;
 }
 
-// Data rows in log.csv (lines minus the header).
 size_t dataLogRowCount() {
-    File f = LittleFS.open(DATA_LOG_PATH, FILE_READ);
-    if (!f) return 0;
-    size_t lines = 0;
-    uint8_t buf[512];
-    size_t n;
-    while ((n = f.read(buf, sizeof(buf))) > 0) {
-        for (size_t i = 0; i < n; i++) if (buf[i] == '\n') lines++;
-    }
-    f.close();
-    return lines ? lines - 1 : 0;
+    Guard g(mtx);
+    return mounted ? rowCount() : 0;
 }
 
 // Print the header and the last n rows of log.csv to the console. Two passes
 // (count, then skip) keep it simple; fine for a manual command.
 void dataLogPrintTail(size_t n) {
-    size_t rows = dataLogRowCount();
+    Guard g(mtx);
+    size_t rows = rowCount();
     File f = LittleFS.open(DATA_LOG_PATH, FILE_READ);
     if (!f) { Console.println("(no log)"); return; }
     Console.println(f.readStringUntil('\n'));
