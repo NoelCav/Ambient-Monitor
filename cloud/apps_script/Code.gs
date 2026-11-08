@@ -6,13 +6,14 @@
  *   readings  one row per sample, the device's log columns (header row = names)
  *   hourly    hourly averages per monitor, made by rollup() (nightly trigger)
  *
- * POST  ?key=<UPLOAD_KEY>   body: the device's CSV (header line + rows)
+ * POST  ?key=<UPLOAD_KEY>&r10=<ohms>   body: the device's CSV (header line + rows)
  *       Appends rows whose epoch is newer than the last one stored for that
  *       device_id, so retries never duplicate. -> {"ok":true,"added":N,"last":epoch}
  * GET   ?latest=1                       newest reading per monitor
  *       ?from=<epoch>&to=<epoch>[&device=<id>][&res=hour]
  *                                       readings in a time range (res=hour: hourly tab)
- *       -> {"columns":[...],"rows":[[...],...]}
+ *       -> {"columns":[...],"rows":[[...],...],"r10":{device_id: ohms}}
+ *       (r10 is each monitor's light calibration, sent with its uploads)
  *
  * Script properties (Project settings > Script properties):
  *   UPLOAD_KEY     required; the device's `upload key` must match
@@ -79,6 +80,8 @@ function doPost(e) {
     });
     if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
     Object.keys(out).forEach(k => props.setProperty(k, String(out[k])));
+    const devs = new Set(lines.map(l => l.split(',')[iDev]).filter(Boolean));
+    if (Number(e.parameter.r10) > 0) devs.forEach(d => props.setProperty('r10_' + d, e.parameter.r10));
     const lastAll = Math.max(0, ...Object.values(out));
     return json_({ok: true, added: rows.length, last: lastAll});
   } finally {
@@ -102,7 +105,10 @@ function doGet(e) {
     const from = Number(p.from || 0), to = Number(p.to || 4e9);
     rows = all.filter(r => r[iEpoch] >= from && r[iEpoch] <= to && (!p.device || r[iDev] === p.device));
   }
-  return json_({columns: columns, rows: rows});
+  const r10 = {};
+  const props = PropertiesService.getScriptProperties().getProperties();
+  Object.keys(props).filter(k => k.indexOf('r10_') === 0).forEach(k => { r10[k.slice(4)] = Number(props[k]); });
+  return json_({columns: columns, rows: rows, r10: r10});
 }
 
 /**

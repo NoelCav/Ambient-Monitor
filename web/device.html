@@ -1,0 +1,204 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ambient Monitor</title>
+<link rel="stylesheet" href="/common.css?v=%BUILD%">
+<script src="/common.js?v=%BUILD%"></script>
+<style>
+/* Device portal only; shared styles are in common.css. */
+.lb{border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0 0}
+.lh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.lbt{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.lbt button,.lbt a.b{margin:0;padding:7px 12px;font-size:14px}
+a.b{display:inline-block;border:1px solid var(--line);border-radius:6px;background:var(--bar);color:var(--fg);text-decoration:none}
+.swi{position:relative;width:52px;height:30px;border-radius:15px;display:inline-block;background:#b0b4ba;cursor:pointer}
+.swi:after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .15s}
+.swi.on{background:#2e7d32}.swi.on:after{left:25px}
+.lab{font-size:15px;font-weight:600;color:var(--mut);margin-right:8px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line)}
+pre{background:var(--pre);border:1px solid var(--line);border-radius:6px;padding:8px;height:45vh;overflow:auto;font-size:13px;white-space:pre-wrap;word-break:break-all;margin:10px 0 0}
+.line{display:flex;gap:8px;align-items:center}.line input{flex:1}.line button{margin:0}
+</style></head><body>
+<h1>Ambient Monitor</h1><div class="sub">%DEVICE% &middot; <span id="upd">connecting&hellip;</span></div>
+
+<div class="sec" onclick="tog('cur')">Last sample<span class="pm" id="pm-cur"></span></div>
+<div id="cur"><div class="warn hide" id="cwarn"></div><div id="curb"></div><div class="muted" id="src"></div></div>
+
+<div class="sec" onclick="tog('tst')">Test readings<span class="r"><span class="lab" id="tlab">Off</span>
+<i class="swi" id="tsw" onclick="event.stopPropagation();setTest(!testOn)"></i><span class="pm" id="pm-tst"></span></span></div>
+<div id="tst"><div class="msg hide" id="tmsg"></div>
+<div id="tstb"></div></div>
+
+<div class="sec" id="gr-sec" onclick="tog('gr')">Graphs<span class="pm" id="pm-gr"></span></div>
+<div id="gr-b"><div style="margin-top:10px"><select id="gsrc" onchange="graph()"></select></div>
+<div id="charts"></div></div>
+
+<div class="sec" onclick="tog('dia')">Sensor diagnostics<span class="pm" id="pm-dia"></span></div>
+<div id="dia-b"></div>
+
+<div class="sec" onclick="tog('dev')">Device details<span class="pm" id="pm-dev"></span></div>
+<div id="dev-b"><div id="devb"></div>
+<button type="button" class="pri" onclick="sampleNow()">Sample now</button><button type="button" onclick="reboot()">Reboot</button>
+<div class="msg hide" id="dmsg"></div></div>
+
+<div class="sec" onclick="tog('con')">Console<span class="pm" id="pm-con"></span></div>
+<div id="con-b"><pre id="cout"></pre>
+<form class="line" style="margin-top:8px" onsubmit="runCmd();return false">
+<input type="text" id="cin" autocomplete="off" autocapitalize="off" placeholder="command, e.g. help"><button type="submit" class="pri">Run</button></form></div>
+
+<div class="sec" onclick="tog('log')">Data log<span class="pm" id="pm-log"></span></div>
+<div id="log-b"><div id="logsum"></div><div class="msg hide" id="lmsg"></div><div id="loglist"></div></div>
+
+<div class="sec" onclick="tog('set')">Settings<span class="pm" id="pm-set"></span></div>
+<div id="set-b"><h3>WiFi networks <span style="font-weight:400" id="wnote"></span></h3><div id="wlist"></div>
+<form onsubmit="wifiAdd();return false"><label>Add a network</label>
+<div class="line"><input type="text" id="wssid" placeholder="network name" autocomplete="off">
+<input type="password" id="wpass" placeholder="password (blank if open)" autocomplete="new-password"></div>
+<button type="submit" class="pri">Add</button></form><div class="msg hide" id="wmsg"></div>
+<h3>Device</h3><form method="POST" action="/save">
+<label>Device ID <span class="muted">(also the .local name; applies on reboot)</span></label><input type="text" name="device_id" value="%DEVICE%">
+<label>Sample every (seconds)</label>
+<input type="number" name="sample_s" min="1" max="86400" value="%SAMPLE%">
+<button type="submit" class="pri">Save &amp; reboot</button></form></div>
+
+<script>
+// Device portal. Shared helpers, tiles, colour scales and charts are in
+// common.js (also used by the online dashboard).
+var testOn=false,last=null,LOGS=null;
+var STABLE_S=30;  // PMS5003 datasheet: data stable 30 s after waking
+sections({cur:1,tst:1,gr:0,dia:0,dev:0,con:0,log:0,set:0},'open',function(k){
+ if(k=='con')con(true);if(k=='log')logs();if(k=='set')wifi();if(k=='gr')(LOGS?Promise.resolve():logs()).then(graph)});
+// Device-detail tiles are plain; only real problems get an outline.
+var RESET={poweron:'Power connected',software:'Restart or update',panic:'Crash (see console)',
+ brownout:'Power dipped',task_wdt:'Watchdog: code hung',int_wdt:'Watchdog: code hung',wdt:'Watchdog: code hung',
+ external:'Reset button',usb:'Reset over USB',deepsleep:'Woke from sleep'};
+function render(d){
+ var s=d.sys,h=d.hw,S=d.sample,L=d.live,t;last=d;
+ testOn=s.test;$('tsw').classList.toggle('on',testOn);set('tlab',testOn?'On':'Off');
+ set('upd','updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'}));
+ var dustMsg=h.dust_on?(h.dust_s<h.warm_s?'Warming up':'No frames'):'Sensor asleep';
+ // Last sample: always what was written to the log. Before the first one,
+ // the current readings stand in, under a warning.
+ if(S){$('cwarn').classList.add('hide');
+  $('curb').innerHTML=readings(S,'No reading');
+  set('src','Written to the log '+dur(S.age_s)+' ago · next in '+dur(s.next_sample_s)+'. Sound and light cover the whole interval. PM2.5 est. is an indoor correction (ALT-CF3); the log and graphs keep raw values.')}
+ else{msg('cwarn','Not saved yet. These are the current readings. First sample in '+dur(s.next_sample_s)+', once the dust sensor has warmed up.');
+  $('curb').innerHTML=L?readings(L,dustMsg):'<div class="muted">Starting…</div>';
+  set('src','')}
+ // Test readings: the same tiles, measured the same way over the last 5 s.
+ if(testOn&&L){var u=L.dust,g=L.diag,c=u.cnt;
+  $('tstb').innerHTML=readings(L,dustMsg)+'<div class="muted">Last 5 s, measured the same way as a sample. Updated '+L.age_s+' s ago.</div>';
+  t=tile('Dust sensor',dur(u.awake_s),'awake',u.awake_s<STABLE_S?['Warming up',YEL]:['Stable',GREEN]);
+  t+=tile('Frame interval',u.ok?g.dt_ms:'–','ms',!u.ok?['No frames',RED]:g.dt_ms<600||g.dt_ms>2500?['Unusual',YEL]:['Normal',null]);
+  t+=tile('Frame errors',g.errors,'in 5 s',g.errors?['Check wiring',RED]:['None',null]);
+  t+=tile('> 0.3 µm',c[0],'per 0.1 L',['Smoke, cooking',null])+tile('> 1.0 µm',c[2],'per 0.1 L',['Fine dust',null]);
+  t+=tile('> 2.5 µm',c[3],'per 0.1 L',['Dust, pollen',null])+tile('> 5 µm',c[4],'per 0.1 L',['Large dust',null]);
+  t+=tile('> 10 µm',c[5],'per 0.1 L',['Sensor sees few',null])+tile('PM2.5 (CF=1)',u.cf1[1],UG,['Factory calibration',null]);
+  $('dia-b').innerHTML=grid(t)+'<div class="muted">Counts and CF=1 averaged over the last '+u.n+' frames. Updated '+L.age_s+' s ago.</div>'}
+ else{$('tstb').innerHTML='<div class="muted">'+(testOn?'Starting: values appear within 5 s.':'Off. Turn on to keep the dust sensor awake and see readings every 5 s.')+'</div>';
+  $('dia-b').innerHTML=grid(tile('Dust sensor',h.dust_on?dur(h.dust_s):'Asleep',h.dust_on?'awake':'',
+   [h.dust_on?(h.dust_s<STABLE_S?'Warming up':'Stable'):'Wakes '+h.warm_s+' s before a sample',null]))+
+   '<div class="muted">Frame and particle details need test mode.</div>'}
+ // Device details: timing, then status, then system.
+ t=tile('Uptime',dur(s.uptime_s),'',null)+tile('Next sample','in '+dur(s.next_sample_s),'',['every '+dur(s.sample_s),null]);
+ t+=tile('Firmware',s.fw=='pending'?'On trial':'OK','',[s.fw=='pending'?'Rolls back if it fails':s.build,s.fw=='pending'?YEL:null]);
+ t+=tile('Mode',testOn?'Test':'Normal','',[testOn?'Dust sensor always on':'Dust sensor sleeps',null]);
+ t+=tile('Climate sensor',h.climate?'OK':'Missing','',h.climate?['BME280 at 0x'+h.climate_addr.toString(16),null]:['Check wiring',RED]);
+ t+=tile('WiFi',s.rssi,'dBm',s.rssi>=-70?[s.rssi>=-60?'Strong':'Good',null]:s.rssi>=-80?['Weak',YEL]:['Very weak',RED]);
+ t+=tile('Last reset',s.reset,'',[RESET[s.reset]||'',/brownout|panic|wdt/.test(s.reset)?RED:null]);
+ t+=tile('Free memory',Math.round(s.heap/1024),'KB',s.heap<40000?['Low',YEL]:null);
+ var low=s.tasks.filter(function(k){return k.stack_free<512});
+ t+=tile('Task stacks',low.length?low.length+' low':'OK','',low.length?[low.map(function(k){return k.name}).join(', '),YEL]:[s.tasks.length+' tasks',null]);
+ var up=s.upload;
+ t+=tile('Upload',!up.on?'Off':up.error?'Failing':up.ok_s<0?'Waiting':dur(up.ok_s)+' ago','',
+  !up.on?['Not set up',null]:up.error?[up.error,RED]:[up.pending?up.pending+' rows waiting':'Up to date',null]);
+ $('devb').innerHTML=grid(t);
+}
+function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
+ .catch(function(){set('upd','reconnecting…')})}
+// Run a console command (POST, so a WiFi password never sits in a URL);
+// resolves to its output without the "> command" echo.
+function cmd(c){return fetch('/cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'c='+encodeURIComponent(c)}).then(function(r){return r.text()}).then(function(x){return x.replace(/^>.*\n/,'').trim()})}
+// Test switch: takes effect immediately; the message says what the scheduler does next.
+function setTest(on){
+ if(!open.tst)tog('tst');
+ cmd('test '+(on?'on':'off')).then(function(){
+  msg('tmsg',on?'Test mode on. Dust sensor waking; readings settle in about 30 s.':
+   'Test mode off. Dust sensor sleeps until '+(last?last.hw.warm_s:90)+' s before the next sample'+(last?' (in '+dur(last.sys.next_sample_s)+')':'')+'.');
+  setTimeout(function(){msg('tmsg','')},15000);tick()})}
+function sampleNow(){msg('dmsg','Requesting a sample…');
+ cmd('sample').then(function(x){msg('dmsg',x||'Sample requested.');tick()})}
+function reboot(){if(!confirm('Reboot the monitor now?'))return;
+ cmd('reboot').then(function(){msg('dmsg','Rebooting. This page reconnects by itself.')})}
+function con(pin){fetch('/console.txt').then(function(r){return r.text()}).then(function(x){var p=$('cout'),
+ b=pin||p.scrollTop+p.clientHeight>=p.scrollHeight-30;p.textContent=x;if(b)p.scrollTop=p.scrollHeight})}
+function runCmd(){var c=$('cin').value.trim();if(!c)return;$('cin').value='';
+ cmd(c).then(function(){con(true);tick();if(open.log)logs()})}
+// WiFi networks (Settings): saved list with Remove, and an Add form.
+function wifi(){return fetch('/wifi.json').then(function(r){return r.json()}).then(function(j){
+ set('wnote','('+j.saved.length+' of '+j.max+'; the strongest in range is used)');
+ var t='';j.saved.forEach(function(s){var cur=s==j.connected;
+  t+='<div class="row"><span><b>'+esc(s)+'</b>'+(cur?' <span class="muted">connected, '+j.rssi+' dBm</span>':'')+'</span>'+
+   (j.saved.length>1?'<a href="#" data-s="'+esc(s).replace(/"/g,'&quot;')+'" onclick="wifiRm(this.dataset.s);return false" style="color:#dc2626">Remove</a>':'')+'</div>'});
+ if(!j.connected)t+='<div class="muted">Not connected: the setup network is on.</div>';
+ $('wlist').innerHTML=t})}
+// SSIDs are quoted for the command; a password is the rest of the line.
+function wifiAdd(){var s=$('wssid').value.trim(),p=$('wpass').value;
+ if(!s||s.indexOf('"')>=0){msg('wmsg','Enter the network name (without double quotes).');return}
+ cmd('wifi add "'+s+'" '+p).then(function(x){msg('wmsg',x||'Added.');$('wssid').value='';$('wpass').value='';wifi()})}
+function wifiRm(s){if(!confirm('Remove '+s+'?'))return;cmd('wifi rm "'+s+'"').then(function(x){msg('wmsg',x);wifi()})}
+// Data log: the current log on top, then saved logs (user saves and automatic
+// archives of full logs), each a box with its actions.
+function btn(label,fn,cls){return '<button type="button"'+(cls?' class="'+cls+'"':'')+' onclick="'+fn+'">'+label+'</button>'}
+function logs(){return fetch('/logs.json').then(function(r){return r.json()}).then(function(j){LOGS=j;
+ var cap=j.rows+j.rows_left;
+ $('logsum').innerHTML=grid(tile('Rows',j.rows,'/ ~'+cap.toLocaleString(),null)+
+  tile('Size',j.live_kb,'/ '+j.max_kb+' KB',null)+
+  tile('Log fills in',last?dur(j.rows_left*last.sys.sample_s):'–','',[last?'then archived below':'',null]));
+ var t='<div class="lb"><div class="lh"><b>Current log</b><span class="muted">'+j.rows+(j.rows==1?' row · ':' rows · ')+j.live_kb+' KB</span></div><div class="lbt">'+
+  '<a class="b" href="/log.csv">&#8595; Download</a>'+btn('&#43; Save copy','showSave()')+btn('&#9776; Graph',"graphOf('')")+btn('&#10005; Clear','clearLog()','del')+
+  '</div><form id="savef" class="hide" onsubmit="saveLog();return false"><div class="line" style="margin-top:10px">'+
+  '<input type="text" id="sname" placeholder="name, e.g. garage-sweep" autocomplete="off">'+
+  '<select id="srange" style="width:auto"><option value="">All rows</option><option value="20">Last 20 rows</option>'+
+  '<option value="100">Last 100 rows</option><option value="30m">Last 30 min</option><option value="1h">Last hour</option>'+
+  '<option value="8h">Last 8 hours</option><option value="24h">Last 24 hours</option></select></div>'+
+  '<button type="submit" class="pri">Save</button></form></div>';
+ var sv=j.saved.slice().sort(function(a,b){return a.name<b.name?1:-1});
+ t+='<h3>Saved logs <span style="font-weight:400">('+sv.length+' · '+j.free_kb+' KB free)</span></h3>';
+ sv.forEach(function(s){var n=esc(s.name),q="'"+n+"'";
+  t+='<div class="lb"><div class="lh"><b>'+n+'</b><span class="muted">'+s.kb+' KB'+archWhy(s.name)+'</span></div><div class="lbt">'+
+   '<a class="b" href="/saved.csv?name='+encodeURIComponent(s.name)+'">&#8595; Download</a>'+btn('&#9998; Rename','showRen('+q+')')+
+   btn('&#9776; Graph','graphOf('+q+')')+btn('&#10005; Delete','rmLog('+q+')','del')+'</div>'+
+   '<form id="ren-'+n+'" class="hide" onsubmit="renLog('+q+');return false"><div class="line" style="margin-top:10px">'+
+   '<input type="text" id="rn-'+n+'" value="'+n+'" autocomplete="off"><button type="submit" class="pri">Rename</button></div></form></div>'});
+ if(!sv.length)t+='<div class="muted">None yet. Full logs are archived here automatically.</div>';
+ $('loglist').innerHTML=t;fillSources()})}
+// Automatic archives carry the reason in their name: archive-<reason>-<time>.
+function archWhy(n){var m=/^archive-([a-z]+)-/.exec(n);if(!m)return '';
+ return ' · archived: '+({full:'log was full',columns:'columns changed (firmware update)',migrated:'moved from log.old.csv'}[m[1]]||'automatically')}
+function showSave(){$('savef').classList.toggle('hide');$('sname').focus()}
+function showRen(n){$('ren-'+n).classList.toggle('hide')}
+function saveLog(){var n=$('sname').value.trim(),r=$('srange').value;
+ if(!n){msg('lmsg','Enter a name first.');return}
+ cmd('log save '+n+(r?' '+r:'')).then(function(x){msg('lmsg',x);logs()})}
+function renLog(n){var to=$('rn-'+n).value.trim();if(!to||to==n)return;
+ cmd('log mv '+n+' '+to).then(function(x){msg('lmsg',x||'Renamed.');logs()})}
+function rmLog(n){if(!confirm('Delete saved log '+n+'?'))return;cmd('log rm '+n).then(function(x){msg('lmsg',x);logs()})}
+function clearLog(){if(!confirm('Delete the current log? Saved logs are kept.'))return;
+ cmd('log clear').then(function(x){msg('lmsg',x);logs()})}
+
+// Graphs: any log (or all combined), drawn by charts() in common.js.
+function fillSources(){var s=$('gsrc'),cur=s.value,o='<option value="">Current log</option><option value="*">All logs combined</option>';
+ (LOGS?LOGS.saved:[]).map(function(x){return x.name}).sort().reverse().forEach(function(n){o+='<option value="'+esc(n)+'">'+esc(n)+'</option>'});
+ s.innerHTML=o;s.value=cur||''}
+function graphOf(n){if(!open.gr)tog('gr');fillSources();$('gsrc').value=n;graph();$('gr-sec').scrollIntoView({behavior:'smooth'})}
+function csvUrl(n){return n?'/saved.csv?name='+encodeURIComponent(n):'/log.csv'}
+function graph(){var src=$('gsrc').value;$('charts').innerHTML='<div class="muted">Loading…</div>';
+ var names=src=='*'?[''].concat((LOGS?LOGS.saved:[]).map(function(x){return x.name})):[src];
+ Promise.all(names.map(function(n){return fetch(csvUrl(n)).then(function(r){return r.ok?r.text():''})})).then(function(ts){
+  var byT={},skipped=0;
+  ts.forEach(function(t){if(t)parseCsv(t).forEach(function(r){if(!(r.epoch>0)){skipped++;return}byT[r.epoch]=r})});
+  var rows=Object.keys(byT).map(function(k){return byT[k]}).sort(function(a,b){return a.epoch-b.epoch});
+  charts($('charts'),[{name:'',rows:rows,r10:last?last.hw.ldr_r10:0}],rows.length?rows.length+' readings'+(skipped?' · '+skipped+' rows without a clock time skipped':'')+'.':'');
+ }).catch(function(){$('charts').innerHTML='<div class="muted">Could not load the log.</div>'})}
+tick();if(open.con)con(true);if(open.set)wifi();if(open.log||open.gr)logs().then(function(){if(open.gr)graph()});
+setInterval(function(){tick();if(open.con)con()},3000);
+</script></body></html>
