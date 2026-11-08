@@ -9,25 +9,49 @@ Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 
 - Pins and runtime defaults live in `src/config.h`. `platformio.ini` holds board/toolchain config and pins the partition table (`default_8MB.csv`); don't change it, because the data log lives on its `spiffs` partition.
 - On this board, opening the USB serial port can reset the ESP32. Use the network console instead when possible.
 
+## Architecture (FreeRTOS on Arduino)
+Tasks, all on core 1 (WiFi runs on core 0). Each sensor task owns its hardware behind one mutex; other code only calls its functions. All are watched by the task watchdog (`WATCHDOG_S`, 30 s): a hung task reboots with reset reason `task_wdt`. The loop task leaves the watchdog during an OTA upload.
+
+| Task | Prio | Module | Owns |
+|------|------|--------|------|
+| soundlight | 5 | `soundlight.cpp` | ADC1 continuous DMA (sound GPIO4 + light GPIO6, 10 kHz each) |
+| dust | 4 | `dust.cpp` | PMS5003 UART (Serial1) + SET power pin |
+| sampler | 3 | `sampler.cpp` | schedule, dust power requests, readings, data log appends |
+| loopTask | 1 | `main.cpp` loop() | WiFi, OTA, web portal, console, commands |
+
+The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-guarded, so any task may call `climateRead()`.
+
+**One `Reading` type** (`reading.h`) is built by one function (`sampler.cpp` takeReading) for both the logged sample (span = sample interval) and the test reading (span = last 5 s, `LIVE_INTERVAL_MS`). It is serialized once each for the log row (`data_log.cpp`), status JSON (`status.cpp` readingJson) and console text (`sampler.cpp` readingText), so the portal's "Last sample" and "Test readings" always measure the same way.
+
 ## Key files
 | File | Purpose |
 |------|---------|
-| `src/main.cpp` | Setup, loop, sensor sampling, BME diagnostics, Serial/console output, status JSON |
-| `src/config.h` | Pins, param defaults, PMS warm-up, log/console sizes, AP + OTA passwords. Includes `secrets.h` |
-| `src/params.h/.cpp` | Runtime params in NVS (`Preferences` namespace `ambient`) with validation |
-| `src/config_portal.h/.cpp` | Web portal: settings form, live reading panel, console page, log download |
-| `src/console.h/.cpp` | `Console` (a `Print`): tees all log output to Serial plus a 16 KB RAM backlog served at `/console` and on raw TCP port 23 |
-| `src/data_log.h/.cpp` | Persistent CSV log on LittleFS, one row per sample |
-| `src/health.h/.cpp` | Reset-reason string (poweron / software / panic / brownout / task_wdt …) |
-| `src/wifi_manager.h/.cpp` | WiFi + NTP + SoftAP fallback + mDNS + ArduinoOTA |
-| `src/sensor_reading.h` | `SensorReading` struct shared across modules |
-| `lib/PMS5003/` | PMS5003 UART frame parser (CF=1, atmospheric, particle counts, frame interval) + SET-pin power |
+| `src/main.cpp` | Wiring only: setup() starts modules and tasks; loop() runs network services |
+| `src/tasks.h/.cpp` | `startTask` (pinned, watchdog-subscribed), `taskFeed`, `watchdogBegin`, stack report, `Guard` mutex lock |
+| `src/reading.h` | `Climate` and `Reading` structs |
+| `src/sampler.h/.cpp` | Sampler task: schedule, `takeReading`, `readingText`, `samplerState()` snapshot |
+| `src/climate.h/.cpp` | BME280: forced-mode read with reset-value check, boot diagnostics, `diag climate`, I2C scan |
+| `src/dust.h/.cpp` | Dust task: frame decode, 10-frame average, power, frame counters |
+| `src/soundlight.h/.cpp` | Sound/light task: continuous ADC, 125 ms windows, per-span stats |
+| `src/status.h/.cpp` | `/status.json` (shape documented in status.h) |
+| `src/data_log.h/.cpp` | Persistent CSV log, saved logs, archives (mutex-guarded) |
+| `src/commands.h/.cpp` | Console commands (help text is the reference) |
+| `src/config_portal.h/.cpp` | Web portal (single page, JS renders status.json) and log/download endpoints |
+| `src/console.h/.cpp` | `Console` (a `Print`): Serial + 16 KB RAM backlog for `/console`, TCP port 23 |
+| `src/config.h` | Pins, defaults, timing/measurement constants, log/console sizes, passwords |
+| `src/params.h/.cpp`, `src/health.h/.cpp`, `src/wifi_manager.h/.cpp` | NVS params, reset reason, WiFi/NTP/mDNS/OTA |
+| `lib/ambient/` | Pure C++ (no Arduino): PMS frame parser, `Window`/`SoundLightStats`/`FrameAverage`, ALT-CF3 |
+| `test/test_core/` | Host unit tests for `lib/ambient`: `pio test -e native` |
+
+## Testing
+- `pio test -e native` runs the host unit tests with PlatformIO's bundled MinGW toolchain (`windows_x86` platform). A separately installed WinLibs GCC is blocked by Windows Application Control on this PC; don't rely on it.
+- Hardware checks go over WiFi: `curl "http://esp32-ambient-01.local/cmd?c=status"` (any console command), `/status.json`, `/console.txt`.
 
 ## Runtime params (web portal)
 - Edit at `http://esp32-ambient-01.local` (mDNS name = sanitized `device_id`) or the device IP. If WiFi can't be joined, the device hosts SoftAP `AmbientMonitor-setup` with the same portal at 192.168.4.1. Saving persists to NVS and reboots.
 - Params: `device_id`, `wifi_ssid`/`wifi_password`, `sample_interval_s` (1–86400, default 600), `live_dbg`/**Test mode** (default on, `DEFAULT_LIVE_DEBUG`).
-- Test mode keeps the PMS powered and prints `[PMS t+Ns]` and `[ENV]` lines every 5 s. With it off, the PMS is duty-cycled: powered `PMS_WARMUP_MS` (90 s) before each sample, then off.
-- `GET /status.json` carries the latest reading plus `sys` (uptime, reset reason, heap, RSSI, live_debug).
+- Schedule: the dust sensor wakes `PMS_WARMUP_MS` (90 s) before each sample and sleeps right after it. The first sample comes once it has warmed up after boot. `sample` (or the portal's Sample now) wakes it and samples once warm; the interval restarts from there.
+- Test mode keeps the dust sensor on and prints `[TEST]` and `[DUST]` lines every 5 s. The test reading itself is computed every 5 s in both modes (portal fallback before the first sample, `read` command).
 
 ## Remote debugging (no USB needed)
 - **Console:** all output goes through `Console.print*` (never `Serial.print*` directly). Read it at `/console` (auto-refreshing page), `/console.txt`, or raw TCP port 23 (backlog, then live). Console writes never touch the network: TCP clients are fed from the backlog by `consoleLoop()` using non-blocking `send()`, so a stuck client can't stall the loop (`WiFiClient::write` can block ~10 s).
@@ -35,7 +59,7 @@ Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 
 - **Reset reason** prints at boot, appears in `status.json` and is a column in the data log. A `brownout` or `task_wdt` there explains an unexplained gap.
 
 ## Data log (on-device)
-- `dataLogAppend()` writes one CSV row per sample to `/log.csv` on LittleFS. Columns: epoch (empty before NTP), uptime_s, boot (NVS counter, namespace `datalog`), reset, device_id, BME, PM + particle counts, sound_avg_p2p/sound_peak_p2p, light. Invalid sensors leave their columns empty.
+- `dataLogAppend()` writes one CSV row per sample to `/log.csv` on LittleFS. Columns: epoch (empty before NTP), uptime_s, boot (NVS counter, namespace `datalog`), reset, device_id, temp/humidity/pressure, PM (atmospheric + CF=1, 10-frame averages), pms_awake_s, particle counts, sound_avg_rms, sound_peak_rms, light (mean over the interval). Invalid sensors leave their columns empty.
 - It **survives firmware uploads** (USB or OTA only write the app partition). It is lost on `pio run -t uploadfs`, a chip erase, or a partition-table change.
 - When it reaches `LOG_MAX_BYTES` (512 KB), or at boot when the stored header differs from the current columns, it is **archived** to `saved/archive-<full|columns|migrated>-<first-row time, UTC>.csv` (reason in the name) and a new log starts, so each file has one layout. Archives sit in the saved-log list with user saves; if free space drops below one log + 32 KB, the oldest `archive-*` files are deleted (user-named saves never are). Older firmware's `log.old.csv` is migrated into an archive at boot.
 - PM2.5: the log keeps raw atmospheric `pm2_5` (trend data) plus `pm2_5_cf1` (for the EPA PurpleAir correction, 0.524*CF1 - 0.0862*RH + 5.75). The portal's health estimate is ALT-CF3 (Wallace 2022, validated indoors), computed from the logged particle counts: 3*(0.00030418*N0.3-0.5 + 0.0018512*N0.5-1 + 0.02069706*N1-2.5).
@@ -45,23 +69,23 @@ Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 
 - **PMS5003** (Plantower manual v2.3): VCC 4.5–5.5 V (fan needs 5 V), ~100 mA; UART/SET 3.3 V TTL; SET high = run, low = sleep; stable data ≥30 s after wake; frame = 32 bytes, Data1–3 CF=1, Data4–6 atmospheric (used), Data7–12 particle counts per 0.1 L. Weak at coarse (>~5 µm) particles: counts >5/>10 µm stay ~0 and PM10 ≈ PM2.5, so visible sunbeam dust barely registers.
 - Bench results (2026-11-08, PMS at ~4.5 V): two units agree at PM2.5 ≈ 57 µg/m³ once settled. A unit fresh from storage read ~245 and took ~30+ min to clear its own dust, which matches the old "it gets better after running for minutes" impression. Both units send frames every ~1048 ms (not the datasheet's 2.3 s / 200–800 ms), and the >0.3 µm count ≈ the >0.5 µm count. Likely normal for this batch.
 - The first parser (834ae40) never decoded a frame, which made early "dead sensor" impressions a software bug. Don't name a helper `word`: Arduino.h `#define`s `word(...)`.
-- **BME280:** runs in forced mode with x1 oversampling (`bmeInit()`/`bmeMeasure()`), which avoids self-heating. `bmeMeasure()` rejects reads still at the 0x800000 reset value, because the Adafruit lib turns those into a plausible-looking fake 23.52 °C / 82.4 % / 699 hPa. Boot prints `dumpBmeCalibration()` + `bmeForcedTest()`. BME #1 had a cracked GND joint (resoldered, works). BME #2 is press-fit and loses contact, so it needs solder.
-- **KY-037:** AO is a DC bias plus the audio signal, so loudness = peak-to-peak (p2p) of each 1 s window (~1 kHz analogRead). A sample logs `sound_avg_p2p` (mean of the 1 s windows over the interval: steady noise like a TV) and `sound_peak_p2p` (loudest 1 s window: bangs); test mode shows the same over 5 s. Quiet ≈ 6–11, TV ≈ 20–40, loud clap ≈ 500+. Runs on 3.3 V through a voltage divider (not in README) that only shrinks the signal; reads stall while the loop is busy, so short sounds can be missed until continuous ADC sampling (RTOS plan).
+- **BME280:** runs in forced mode with x1 oversampling, which avoids self-heating. `climateRead()` rejects reads still at the 0x800000 reset value, because the Adafruit lib turns those into a plausible-looking fake 23.52 °C / 82.4 % / 699 hPa. Boot prints the chip ID, calibration words and a raw forced conversion (`diag climate` repeats them). BME #1 had a cracked GND joint (resoldered, works). BME #2 is press-fit and loses contact, so it needs solder.
+- **KY-037:** AO is a DC bias plus the audio signal. Sampled continuously (DMA, 10 kHz) and measured as RMS about each 125 ms window's own mean. A sample logs `sound_avg_rms` (RMS of all sound in the interval: steady noise like a TV) and `sound_peak_rms` (loudest 125 ms window: bangs). Quiet room ≈ 2-5. Portal colour thresholds (`SQ` in config_portal.cpp: 4 / 15 / 60) are guesses until a TV/clap calibration. Runs on 3.3 V through a voltage divider (not in README) that only shrinks the signal.
 - **Light:** photoresistor divider on GPIO 6; 4095 = saturated (bright overhead light).
 - README wiring lists PMS RX/TX swapped from a port test. Firmware uses GPIO17 as ESP RX, so PMS TX goes to GPIO17.
 
 ## Planned next
-FreeRTOS restructure, staying on Arduino. The user knows RTOS; skip teaching framing. Rough order: split `main.cpp` into per-sensor files + native unit tests for the PMS parser, then a PMS task, mailboxes/sampler + mutex for shared readings, logger task, continuous-ADC sound, watchdog + stack stats.
-- **Sound fix (part of the RTOS work):** today the KY-037 is read with `analogRead` once per `loop()` pass (~1 kHz at best). Reads stall whenever the loop is busy (WiFi, HTTP handlers, BME reads, OTA), and 1 kHz misses short, sharp sounds, so loud events can go unrecorded. Move sound to the ESP32-S3 continuous ADC (DMA, ~8-16 kHz) in its own task. Compute per-second RMS and peak-to-peak from every sample, and keep `sound_avg_p2p` / `sound_peak_p2p` semantics (or add RMS columns). Consider removing the voltage divider: the module runs on 3.3 V, so the divider only shrinks the signal.
+- Calibrate the sound colour thresholds with a TV and a clap; consider removing the KY-037 voltage divider.
+- RTOS restructure done 2026-11-08 (branch `rtos`). Not done: a separate logger task (the sampler appends directly; writes are small).
 
 ## Credentials
 - `src/secrets.h` (gitignored): `WIFI_SSID`, `WIFI_PASSWORD`, `AP_PASSWORD`, optional `OTA_PASSWORD` (defaults to `AP_PASSWORD`). Template: `src/secrets.h.example`.
 - `secrets.ini` (gitignored, repo root): `[ota] password = …` for `pio run -e ota`, which must match `OTA_PASSWORD`. Template: `secrets.ini.example`.
 
 ## Conventions
-- Non-blocking loop: no long `delay()` in `loop()`. Network writes must never block sampling.
+- Sensor work belongs in its task; loop() is network-only. Never call `analogRead()` on ADC1 pins (the continuous ADC owns ADC1).
 - Log through `Console`, not `Serial`.
-- Level functions (`tempLevel`, `pm25Level`, …) classify readings for the serial output and portal.
+- Reading levels and colours live only in the portal JS; the firmware reports numbers.
 
 ## Dependencies
 - `adafruit/Adafruit BME280 Library@^2.1.2` (everything else is in the arduino-esp32 core)

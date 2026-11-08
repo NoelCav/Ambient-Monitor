@@ -2,10 +2,11 @@
 #include <Arduino.h>
 #include "reading.h"
 
-// Persistent CSV log on the LittleFS data partition. Thread-safe: every
-// function holds one mutex (the sampler appends while the portal reads). Firmware uploads only
+// Persistent CSV log on the LittleFS data partition. Firmware uploads only
 // rewrite the app partition, so the log survives reflashing; it is lost only
 // on `pio run -t uploadfs`, a full chip erase, or a partition-table change.
+// Thread-safe: every function holds one mutex (the sampler task appends while
+// the portal and console read, save and rename).
 //
 // One row per sample in /log.csv. When it passes LOG_MAX_BYTES, or at boot if
 // the stored header differs from the current columns, it is archived to
