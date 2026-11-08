@@ -29,8 +29,15 @@ static const char* const HELP =
     "\n"
     "SETTINGS (apply immediately and are saved)\n"
     "  test on | test off        test mode: dust sensor stays on, live values every 5 s.\n"
-    "                            'off' lets the sensor sleep after the next sample.\n"
+    "                            'off': it sleeps until 90 s before each sample.\n"
     "  set sample <seconds>      sample interval, 1-86400.  e.g.  set sample 30\n"
+    "\n"
+    "WIFI (up to 5 saved networks; the strongest one in range is used)\n"
+    "  wifi                      saved networks and the current connection\n"
+    "  wifi add <ssid> [pass]    add a network, or change a saved one's password.\n"
+    "                            Quote an SSID with spaces; omit pass for an open one.\n"
+    "                            e.g.  wifi add \"Home Net\" hunter22hunter\n"
+    "  wifi rm <ssid>            remove a saved network (not the last one)\n"
     "\n"
     "LOGS (one CSV row per sample; survive firmware updates)\n"
     "  log                       row count, size, free storage\n"
@@ -119,6 +126,42 @@ static void setSampleInterval(uint32_t seconds) {
     Console.printf("sample interval %u s\n", (unsigned)params().sampleIntervalS);
 }
 
+// "<ssid> <rest>" where the SSID may be "quoted" to include spaces.
+static void splitSsid(const String& arg, String& ssid, String& rest) {
+    int end;
+    if (arg.startsWith("\"")) {
+        end = arg.indexOf('"', 1);
+        if (end < 0) end = arg.length();
+        ssid = arg.substring(1, end);
+        end++;
+    } else {
+        end = arg.indexOf(' ');
+        if (end < 0) end = arg.length();
+        ssid = arg.substring(0, end);
+    }
+    rest = end < (int)arg.length() ? arg.substring(end) : "";
+    rest.trim();
+}
+
+static void cmdWifi(const String& sub, const String& arg) {
+    String ssid, pass, err;
+    splitSsid(arg, ssid, pass);
+    if (sub == "" || sub == "list") {
+        for (const WifiNet& w : params().wifi) {
+            bool cur = wifiConnected() && WiFi.SSID() == w.ssid;
+            Console.printf("  %-32s %s%s\n", w.ssid.c_str(), w.pass.length() ? "secured" : "open",
+                cur ? (", connected " + String(WiFi.RSSI()) + " dBm").c_str() : "");
+        }
+        if (!wifiConnected()) Console.printf("  not connected (setup AP '%s' is on)\n", AP_SSID);
+    } else if (sub == "add") {
+        if (!wifiAdd(ssid, pass, err)) Console.printf("wifi add failed: %s\n", err.c_str());
+    } else if (sub == "rm") {
+        if (!wifiRemove(ssid, err)) Console.printf("wifi rm failed: %s\n", err.c_str());
+    } else {
+        Console.println("wifi what? list | add <ssid> [pass] | rm <ssid>");
+    }
+}
+
 static void printSaved(const String& name, size_t bytes, void* ctx) {
     Console.printf("  saved/%-31s %6u KB\n", (name + ".csv").c_str(), (unsigned)((bytes + 1023) / 1024));
     (*(int*)ctx)++;
@@ -190,7 +233,15 @@ void commandRun(const String& raw) {
     String line = raw;
     line.trim();
     if (!line.length()) return;
-    Console.printf("> %s\n", line.c_str());
+    // Echo the command, but never a WiFi password.
+    String shown = line, low = line;
+    low.toLowerCase();
+    if (low.startsWith("wifi add ")) {
+        String ssid, pass;
+        splitSsid(line.substring(9), ssid, pass);
+        shown = "wifi add \"" + ssid + "\"" + (pass.length() ? " ********" : "");
+    }
+    Console.printf("> %s\n", shown.c_str());
 
     // Split into up to three words: cmd, sub, rest.
     String words[3];
@@ -223,6 +274,8 @@ void commandRun(const String& raw) {
         else Console.println("usage: set sample <1-86400 seconds>");
     } else if (cmd == "log") {
         cmdLog(sub, arg);
+    } else if (cmd == "wifi") {
+        cmdWifi(sub, arg);
     } else if (cmd == "diag") {
         if (sub == "climate") climateDiag();
         else if (sub == "i2c") i2cScan();

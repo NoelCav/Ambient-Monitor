@@ -48,8 +48,9 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 - Hardware checks go over WiFi: `curl "http://esp32-ambient-01.local/cmd?c=status"` (any console command), `/status.json`, `/console.txt`.
 
 ## Runtime params (web portal)
-- Edit at `http://esp32-ambient-01.local` (mDNS name = sanitized `device_id`) or the device IP. If WiFi can't be joined, the device hosts SoftAP `AmbientMonitor-setup` with the same portal at 192.168.4.1. Saving persists to NVS and reboots.
-- Params: `device_id`, `wifi_ssid`/`wifi_password`, `sample_interval_s` (1–86400, default 600), **test mode** (`Params::testMode`, default on, `DEFAULT_TEST_MODE`; stored under the older NVS key `live_dbg`).
+- Edit at `http://esp32-ambient-01.local` (mDNS name = sanitized `device_id`) or the device IP. If no saved network is in range, the device hosts SoftAP `AmbientMonitor-setup` with the same portal at 192.168.4.1. The Settings form (device ID, sample interval) saves to NVS and reboots; WiFi changes, test mode and `set sample` apply immediately.
+- **WiFi:** up to `WIFI_MAX` (5) saved networks (NVS `wifi_n`, `wifi_s<i>`/`wifi_p<i>`; the old single `wifi_ssid`/`wifi_pass` migrates in). `WiFiMulti` joins the strongest in range; offline, the setup AP turns on and a rescan runs every 2 min; the AP turns off once reconnected. Manage with `wifi`, `wifi add "<ssid>" [pass]`, `wifi rm <ssid>` or the portal's Settings (passwords are masked in the console echo; the portal POSTs commands).
+- Params: `device_id`, the WiFi list, `sample_interval_s` (1–86400, default 600), **test mode** (`Params::testMode`, default on, `DEFAULT_TEST_MODE`; stored under the older NVS key `live_dbg`).
 - Schedule: the dust sensor wakes `PMS_WARMUP_MS` (90 s) before each sample and sleeps right after it. The first sample comes once it has warmed up after boot. `sample` (or the portal's Sample now) wakes it and samples once warm; the interval restarts from there.
 - Test mode keeps the dust sensor on and prints `[TEST]` and `[DUST]` lines every 5 s. The test reading itself is computed every 5 s in both modes (portal fallback before the first sample, `read` command).
 

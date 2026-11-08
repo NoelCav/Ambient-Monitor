@@ -1,11 +1,16 @@
 #pragma once
 #include <Arduino.h>
+#include <vector>
 
-// Runtime parameters, stored in NVS (Preferences) and editable via the web
-// config portal. Loaded once at boot; changes apply on reboot.
+struct WifiNet {
+    String ssid;
+    String pass;  // empty for an open network
+};
+
+// Runtime parameters, stored in NVS (Preferences) and editable from the portal
+// and console. The device ID applies on reboot; the rest apply immediately.
 struct Params {
-    String   wifiSsid;
-    String   wifiPassword;
+    std::vector<WifiNet> wifi;  // saved networks (up to WIFI_MAX); joins the strongest in range
     String   deviceId;
     uint32_t sampleIntervalS;
     // Test mode: the dust sensor stays on and [TEST]/[DUST] lines print every 5 s.

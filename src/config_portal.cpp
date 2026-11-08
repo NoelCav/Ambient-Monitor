@@ -5,6 +5,8 @@
 #include "data_log.h"
 #include "commands.h"
 #include "status.h"
+#include "wifi_manager.h"
+#include <WiFi.h>
 #include <WebServer.h>
 #include <LittleFS.h>
 
@@ -112,11 +114,13 @@ pre{background:var(--pre);border:1px solid var(--line);border-radius:6px;padding
 <div id="log-b"><div id="logsum"></div><div class="msg hide" id="lmsg"></div><div id="loglist"></div></div>
 
 <div class="sec" onclick="tog('set')">Settings<span class="pm" id="pm-set"></span></div>
-<div id="set-b"><form method="POST" action="/save">
-<label>Device ID</label><input type="text" name="device_id" value="%DEVICE%">
-<label>WiFi network</label><input type="text" name="wifi_ssid" value="%SSID%">
-<label>WiFi password <span class="muted">(blank keeps current)</span></label>
-<input type="password" name="wifi_pass" value="" placeholder="unchanged">
+<div id="set-b"><h3>WiFi networks <span style="font-weight:400" id="wnote"></span></h3><div id="wlist"></div>
+<form onsubmit="wifiAdd();return false"><label>Add a network</label>
+<div class="line"><input type="text" id="wssid" placeholder="network name" autocomplete="off">
+<input type="password" id="wpass" placeholder="password (blank if open)" autocomplete="new-password"></div>
+<button type="submit" class="pri">Add</button></form><div class="msg hide" id="wmsg"></div>
+<h3>Device</h3><form method="POST" action="/save">
+<label>Device ID <span class="muted">(also the .local name; applies on reboot)</span></label><input type="text" name="device_id" value="%DEVICE%">
 <label>Sample every (seconds)</label>
 <input type="number" name="sample_s" min="1" max="86400" value="%SAMPLE%">
 <button type="submit" class="pri">Save &amp; reboot</button></form></div>
@@ -135,7 +139,7 @@ function show(k){body(k).classList.toggle('hide',!open[k]);set('pm-'+k,open[k]?'
 function tog(k){open[k]=open[k]?0:1;show(k);
  if(open[k])setTimeout(function(){var b=body(k),h=b.previousElementSibling;
   if(b.getBoundingClientRect().bottom>innerHeight)h.scrollIntoView({behavior:'smooth',block:'start'})},60);try{localStorage.setItem('open',JSON.stringify(open))}catch(e){}
- if(open[k]){if(k=='con')con(true);if(k=='log')logs();if(k=='gr')(LOGS?Promise.resolve():logs()).then(graph)}}
+ if(open[k]){if(k=='con')con(true);if(k=='log')logs();if(k=='set')wifi();if(k=='gr')(LOGS?Promise.resolve():logs()).then(graph)}}
 for(var k in open)show(k);
 // A tile: label, value + unit, and q = [meaning, outline colour, plain text].
 // The meaning text takes the colour too unless q[2] (pale colours like light).
@@ -227,8 +231,9 @@ function render(d){
 }
 function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
  .catch(function(){set('upd','reconnecting…')})}
-// Run a console command; resolves to its output without the "> command" echo.
-function cmd(c){return fetch('/cmd?c='+encodeURIComponent(c)).then(function(r){return r.text()}).then(function(x){return x.replace(/^>.*\n/,'').trim()})}
+// Run a console command (POST, so a WiFi password never sits in a URL);
+// resolves to its output without the "> command" echo.
+function cmd(c){return fetch('/cmd',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'c='+encodeURIComponent(c)}).then(function(r){return r.text()}).then(function(x){return x.replace(/^>.*\n/,'').trim()})}
 // Test switch: takes effect immediately; the message says what the scheduler does next.
 function setTest(on){
  if(!open.tst)tog('tst');
@@ -244,6 +249,19 @@ function con(pin){fetch('/console.txt').then(function(r){return r.text()}).then(
  b=pin||p.scrollTop+p.clientHeight>=p.scrollHeight-30;p.textContent=x;if(b)p.scrollTop=p.scrollHeight})}
 function runCmd(){var c=$('cin').value.trim();if(!c)return;$('cin').value='';
  cmd(c).then(function(){con(true);tick();if(open.log)logs()})}
+// WiFi networks (Settings): saved list with Remove, and an Add form.
+function wifi(){return fetch('/wifi.json').then(function(r){return r.json()}).then(function(j){
+ set('wnote','('+j.saved.length+' of '+j.max+'; the strongest in range is used)');
+ var t='';j.saved.forEach(function(s){var cur=s==j.connected;
+  t+='<div class="row"><span><b>'+esc(s)+'</b>'+(cur?' <span class="muted">connected, '+j.rssi+' dBm</span>':'')+'</span>'+
+   (j.saved.length>1?'<a href="#" data-s="'+esc(s).replace(/"/g,'&quot;')+'" onclick="wifiRm(this.dataset.s);return false" style="color:#dc2626">Remove</a>':'')+'</div>'});
+ if(!j.connected)t+='<div class="muted">Not connected: the setup network is on.</div>';
+ $('wlist').innerHTML=t})}
+// SSIDs are quoted for the command; a password is the rest of the line.
+function wifiAdd(){var s=$('wssid').value.trim(),p=$('wpass').value;
+ if(!s||s.indexOf('"')>=0){msg('wmsg','Enter the network name (without double quotes).');return}
+ cmd('wifi add "'+s+'" '+p).then(function(x){msg('wmsg',x||'Added.');$('wssid').value='';$('wpass').value='';wifi()})}
+function wifiRm(s){if(!confirm('Remove '+s+'?'))return;cmd('wifi rm "'+s+'"').then(function(x){msg('wmsg',x);wifi()})}
 // Data log: the current log on top, then saved logs (user saves and automatic
 // archives of full logs), each a box with its actions.
 var LOGS=null;
@@ -350,7 +368,7 @@ function hover(i){var V=G.view,r=V.rows[i],x=((r.epoch-V.t0)/V.span*1000).toFixe
  [].forEach.call(document.querySelectorAll('#charts .hl'),function(l){l.setAttribute('x1',x);l.setAttribute('x2',x)});
  SER.forEach(function(s,si){var e=$('gv'+si);if(!e)return;
   e.textContent=s.l.map(function(f){var v=f(r);return isFinite(v)?v.toFixed(s.d):'–'}).join(' / ')+(s.u?' '+s.u:'')+' · '+tfmt(r.epoch)})}
-tick();if(open.con)con(true);if(open.log||open.gr)logs().then(function(){if(open.gr)graph()});
+tick();if(open.con)con(true);if(open.set)wifi();if(open.log||open.gr)logs().then(function(){if(open.gr)graph()});
 setInterval(function(){tick();if(open.con)con()},3000);
 </script></body></html>)HTML";
 
@@ -358,7 +376,6 @@ static void handleRoot() {
     const Params& p = params();
     String html = FPSTR(ROOT_PAGE);
     html.replace("%DEVICE%", esc(p.deviceId));
-    html.replace("%SSID%", esc(p.wifiSsid));
     html.replace("%SAMPLE%", String(p.sampleIntervalS));
     server.send(200, "text/html", html);
 }
@@ -367,10 +384,6 @@ static void handleSave() {
     Params p = params();  // start from current, override submitted fields
 
     if (server.hasArg("device_id")) p.deviceId        = server.arg("device_id");
-    if (server.hasArg("wifi_ssid")) p.wifiSsid         = server.arg("wifi_ssid");
-    // Only overwrite the password when a new one was provided.
-    if (server.hasArg("wifi_pass") && server.arg("wifi_pass").length() > 0)
-        p.wifiPassword = server.arg("wifi_pass");
     if (server.hasArg("sample_s")) p.sampleIntervalS = (uint32_t)server.arg("sample_s").toInt();
 
     paramsSave(p);
@@ -417,6 +430,26 @@ static void appendSaved(const String& name, size_t bytes, void* ctx) {
     j += "{\"name\":\"" + name + "\",\"kb\":" + String((bytes + 1023) / 1024) + "}";
 }
 
+// JSON string literal (SSIDs may contain quotes or backslashes).
+static String jsonStr(const String& s) {
+    String out = "\"";
+    for (unsigned i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '"' || c == '\\') out += '\\';
+        if ((uint8_t)c >= 0x20) out += c;
+    }
+    return out + "\"";
+}
+
+// Saved WiFi networks (names only) and the current connection, for Settings.
+static void handleWifiJson() {
+    String j = "[";
+    for (const WifiNet& w : params().wifi) j += (j.length() > 1 ? "," : "") + jsonStr(w.ssid);
+    bool on = wifiConnected();
+    server.send(200, "application/json", "{\"saved\":" + j + "],\"max\":" + String(WIFI_MAX) +
+        ",\"connected\":" + jsonStr(on ? WiFi.SSID() : "") + ",\"rssi\":" + String(on ? WiFi.RSSI() : 0) + "}");
+}
+
 // Current log stats and the saved-log list, for the Data log section.
 static void handleLogsJson() {
     String j = "[";
@@ -442,6 +475,7 @@ void configPortalSetup() {
     server.on("/log.csv", HTTP_GET, [] { sendCsv(DATA_LOG_PATH, "log"); });
     server.on("/cmd", handleCmd);  // GET or POST
     server.on("/logs.json", HTTP_GET, handleLogsJson);
+    server.on("/wifi.json", HTTP_GET, handleWifiJson);
     server.on("/saved.csv", HTTP_GET, handleSavedDownload);
     server.onNotFound(handleRoot);  // simple captive-portal-style fallback
     server.begin();

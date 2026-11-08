@@ -12,6 +12,8 @@
 #define WIFI_PASSWORD ""
 #endif
 
+#define WIFI_MAX 5  // saved WiFi networks
+
 #ifndef DEVICE_ID
 #define DEVICE_ID "esp32-ambient-01"
 #endif

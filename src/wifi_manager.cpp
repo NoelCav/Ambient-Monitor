@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
+#include <WiFiMulti.h>
 #include <time.h>
 
 static unsigned long lastReconnectAttempt = 0;
@@ -12,6 +13,7 @@ static const unsigned long RECONNECT_INTERVAL_MS = 120000;  // 2 min between ret
 static bool wasDisconnected = false;
 static bool ntpSynced = false;
 static bool apActive = false;
+static WiFiMulti multi;
 
 static void checkNtpSync() {
     if (ntpSynced) return;
@@ -96,29 +98,40 @@ static void startOta() {
     Console.println("OTA: listening on port 3232");
 }
 
+// Saved networks: WiFiMulti scans and joins the strongest one in range.
+static void loadNetworks() {
+    multi.APlistClean();
+    for (const WifiNet& w : params().wifi) multi.addAP(w.ssid.c_str(), w.pass.length() ? w.pass.c_str() : nullptr);
+}
+
+static void onConnected(const char* how) {
+    Console.printf("WiFi: %s %s (%d dBm), IP %s\n", how, WiFi.SSID().c_str(), (int)WiFi.RSSI(),
+        WiFi.localIP().toString().c_str());
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    MDNS.end();
+    startMdns();  // (re)bind the responder to the new connection
+    if (apActive) {  // back on a network: the setup AP is no longer needed
+        WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_STA);
+        apActive = false;
+        Console.println("WiFi: setup AP off");
+    }
+}
+
 void wifiSetup() {
     // DHCP hostname must be set before the interface starts.
     WiFi.setHostname(mdnsHostname().c_str());
     WiFi.mode(WIFI_STA);
-    WiFi.begin(params().wifiSsid.c_str(), params().wifiPassword.c_str());
-    Console.printf("WiFi: connecting to %s", params().wifiSsid.c_str());
-
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-        delay(250);
-        Console.print(".");
-    }
-    Console.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Console.printf("WiFi: connected, IP %s\n", WiFi.localIP().toString().c_str());
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-        Console.println("NTP: time sync requested");
-        startMdns();
+    loadNetworks();
+    Console.printf("WiFi: looking for %u saved network(s)\n", (unsigned)params().wifi.size());
+    if (multi.run(10000) == WL_CONNECTED) {
+        onConnected("connected to");
     } else {
-        Console.println("WiFi: connection failed, starting AP fallback + background retry");
+        Console.println("WiFi: no saved network in range; setup AP on, retrying every 2 min");
         startAp();
+        wasDisconnected = true;
     }
+    lastReconnectAttempt = millis();
     startOta();
 }
 
@@ -128,25 +141,22 @@ void wifiLoop() {
     if (WiFi.status() == WL_CONNECTED) {
         if (wasDisconnected) {
             wasDisconnected = false;
-            Console.printf("WiFi: reconnected, IP %s\n", WiFi.localIP().toString().c_str());
-            configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-            MDNS.end();
-            startMdns();  // re-bind the responder after the drop
+            onConnected("reconnected to");
         }
         checkNtpSync();
         return;
     }
 
+    if (!wasDisconnected) Console.println("WiFi: connection lost");
     wasDisconnected = true;
-    unsigned long now = millis();
-    if (now - lastReconnectAttempt >= RECONNECT_INTERVAL_MS) {
-        lastReconnectAttempt = now;
-        Console.println("WiFi: attempting reconnection...");
-        WiFi.reconnect();
-    }
+    if (!apActive) startAp();  // keep the portal reachable while offline
 
-    // Ensure the config portal stays reachable while we're offline.
-    if (!apActive) startAp();
+    // Rescan and join the strongest saved network. This blocks the loop task
+    // for a few seconds; sensors and logging run in their own tasks.
+    if (millis() - lastReconnectAttempt >= RECONNECT_INTERVAL_MS) {
+        multi.run(5000);
+        lastReconnectAttempt = millis();
+    }
 }
 
 bool wifiConnected() {
@@ -155,4 +165,43 @@ bool wifiConnected() {
 
 bool timeSynced() {
     return time(nullptr) > 1704067200;  // after 2024-01-01: NTP has run
+}
+
+bool wifiAdd(const String& ssid, const String& pass, String& err) {
+    if (!ssid.length() || ssid.length() > 32) { err = "SSID must be 1-32 characters"; return false; }
+    if (pass.length() && (pass.length() < 8 || pass.length() > 63)) { err = "password must be 8-63 characters (or empty for an open network)"; return false; }
+    Params p = params();
+    bool updated = false;
+    for (WifiNet& w : p.wifi) {
+        if (w.ssid == ssid) {
+            w.pass = pass;
+            updated = true;
+        }
+    }
+    if (!updated) {
+        if (p.wifi.size() >= WIFI_MAX) { err = "list is full (" + String(WIFI_MAX) + "); remove one first"; return false; }
+        p.wifi.push_back({ssid, pass});
+    }
+    paramsSave(p);
+    loadNetworks();
+    if (!wifiConnected()) lastReconnectAttempt = millis() - RECONNECT_INTERVAL_MS;  // try it now
+    Console.printf("WiFi: %s '%s' (%u saved)\n", updated ? "updated" : "added", ssid.c_str(), (unsigned)p.wifi.size());
+    return true;
+}
+
+bool wifiRemove(const String& ssid, String& err) {
+    Params p = params();
+    size_t before = p.wifi.size();
+    for (size_t i = 0; i < p.wifi.size(); i++)
+        if (p.wifi[i].ssid == ssid) p.wifi.erase(p.wifi.begin() + i--);
+    if (p.wifi.size() == before) { err = "no saved network '" + ssid + "'"; return false; }
+    if (p.wifi.empty()) { err = "it's the only saved network; add another first"; return false; }
+    paramsSave(p);
+    loadNetworks();
+    Console.printf("WiFi: removed '%s' (%u saved)\n", ssid.c_str(), (unsigned)p.wifi.size());
+    if (wifiConnected() && WiFi.SSID() == ssid) {  // was using it: switch to another
+        WiFi.disconnect();
+        lastReconnectAttempt = millis() - RECONNECT_INTERVAL_MS;
+    }
+    return true;
 }
