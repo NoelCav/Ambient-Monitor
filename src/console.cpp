@@ -46,10 +46,17 @@ static size_t readFrom(uint32_t& pos, char* out, size_t max) {
     return n;
 }
 
-String consoleBacklog() {
-    uint32_t pos = 0;  // clamped to the oldest buffered byte
+String consoleBacklog() { return consoleSince(0); }
+
+uint32_t consolePos() {
+    portENTER_CRITICAL(&ringLock);
+    uint32_t p = written;
+    portEXIT_CRITICAL(&ringLock);
+    return p;
+}
+
+String consoleSince(uint32_t pos) {  // pos is clamped to the oldest buffered byte
     String out;
-    out.reserve(CONSOLE_BUF_BYTES);
     char chunk[256];
     size_t n;
     while ((n = readFrom(pos, chunk, sizeof(chunk))) > 0) {
@@ -59,7 +66,40 @@ String consoleBacklog() {
     return out;
 }
 
+// --- Typed input ---
+
+static void (*commandHandler)(const String&) = nullptr;
+
+void consoleSetCommandHandler(void (*handler)(const String& line)) { commandHandler = handler; }
+
+// Accumulates printable bytes into a line and dispatches it on CR/LF. Telnet
+// option negotiation (IAC = 0xFF + 2 bytes) and other control bytes are
+// dropped, so a plain `telnet <host>` works as well as netcat.
+struct LineReader {
+    String line;
+    uint8_t skip = 0;  // bytes left of a telnet IAC sequence
+    void feed(uint8_t c) {
+        if (skip) { skip--; return; }
+        if (c == 0xFF) { skip = 2; return; }
+        if (c == '\r' || c == '\n') {
+            line.trim();
+            if (line.length() && commandHandler) {
+                String cmd = line;
+                line = "";
+                commandHandler(cmd);
+            }
+            line = "";
+            return;
+        }
+        if (c == 8 || c == 127) { if (line.length()) line.remove(line.length() - 1); return; }
+        if (c >= 0x20 && c < 0x7F && line.length() < 120) line += (char)c;
+    }
+};
+static LineReader serialIn, tcpIn;
+
 void consoleLoop() {
+    while (Serial.available()) serialIn.feed(Serial.read());
+
     bool netUp = WiFi.status() == WL_CONNECTED || (WiFi.getMode() & WIFI_AP);
     if (!netUp) return;
     if (!serverStarted) {
@@ -73,13 +113,21 @@ void consoleLoop() {
         if (client) client.stop();  // one client at a time; newest wins
         client = incoming;
         clientPos = 0;              // start with the full backlog
-        Console.printf("Console: TCP client connected from %s\n",
+        tcpIn = LineReader();
+        Console.printf("Console: TCP client connected from %s (type 'help')\n",
             client.remoteIP().toString().c_str());
     }
     if (!client) return;
     if (!client.connected()) {
         client.stop();
         return;
+    }
+
+    // Input: read whatever has arrived without blocking.
+    uint8_t in[64];
+    int got;
+    while ((got = recv(client.fd(), in, sizeof(in), MSG_DONTWAIT)) > 0) {
+        for (int i = 0; i < got; i++) tcpIn.feed(in[i]);
     }
 
     // Raw non-blocking send: WiFiClient::write() retries with 1 s selects (up

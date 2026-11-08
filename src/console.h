@@ -24,3 +24,12 @@ void consoleLoop();
 
 // Copy of the current backlog, oldest first.
 String consoleBacklog();
+
+// Typed input: complete lines from USB serial or the TCP client are passed to
+// this handler (from consoleLoop(), i.e. on the main loop).
+void consoleSetCommandHandler(void (*handler)(const String& line));
+
+// Output position markers, so a caller can capture exactly what a command
+// printed: pos = consolePos(); run(); text = consoleSince(pos).
+uint32_t consolePos();
+String consoleSince(uint32_t pos);
