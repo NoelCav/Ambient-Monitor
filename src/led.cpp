@@ -24,6 +24,13 @@ static Rgb airColour(const PmsFrame& d) {
             SCALE[i].b + (SCALE[i + 1].b - SCALE[i].b) * f};
 }
 
+// Full-saturation colour at hue h (0-1): red -> yellow -> green -> cyan -> blue -> magenta.
+static Rgb hue(float h) {
+    float x = 6 * (h - floorf(h));
+    auto clamp01 = [](float v) { return fminf(1, fmaxf(0, v)); };
+    return {255 * clamp01(fabsf(x - 3) - 1), 255 * clamp01(2 - fabsf(x - 2)), 255 * clamp01(2 - fabsf(x - 4))};
+}
+
 static void show(Rgb c, float level) {  // level 0-1
     rgbLedWrite(RGB_BUILTIN, c.r * level, c.g * level, c.b * level);
 }
@@ -50,8 +57,8 @@ static void ledTask(void*) {
             show({255, 255, 255}, on ? bright : 0);
             continue;
         }
-        if (!live.at_ms) {  // starting up
-            show({0x25, 0x63, 0xeb}, bright * breathe);
+        if (!live.at_ms) {  // starting up: rainbow, one cycle every 3 s
+            show(hue(now / 3000.0f), bright);
             continue;
         }
         if (WiFi.status() != WL_CONNECTED && now / 2000 % 2 == 0 && now % 2000 < 200) {  // offline blink
