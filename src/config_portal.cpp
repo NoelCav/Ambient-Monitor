@@ -40,27 +40,11 @@ static void handleRoot() {
     const Params& p = params();
     String html = FPSTR(DEVICE_HTML);
     html.replace("%DEVICE%", esc(p.deviceId));
+    html.replace("%NAME%", esc(deviceLabel(p)));
+    html.replace("%NAMEVAL%", esc(p.name));
     html.replace("%SAMPLE%", String(p.sampleIntervalS));
     html.replace("%BUILD%", String(buildTime()).substring(0, 16));
     server.send(200, "text/html", html);
-}
-
-static void handleSave() {
-    Params p = params();  // start from current, override submitted fields
-
-    if (server.hasArg("device_id")) p.deviceId        = server.arg("device_id");
-    if (server.hasArg("sample_s")) p.sampleIntervalS = (uint32_t)server.arg("sample_s").toInt();
-
-    paramsSave(p);
-
-    server.send(200, "text/html",
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        "<meta http-equiv='refresh' content='5;url=/'></head><body>"
-        "<h3>Saved. Rebooting&hellip;</h3><p>This page will return in a few seconds.</p>"
-        "</body></html>");
-
-    delay(500);     // let the response flush before reset
-    ESP.restart();
 }
 
 static void handleStatus() {
@@ -134,7 +118,6 @@ void configPortalSetup() {
         server.sendHeader("Cache-Control", "max-age=86400");
         server.send_P(200, "application/javascript", COMMON_JS);
     });
-    server.on("/save", HTTP_POST, handleSave);
     server.on("/console.txt", HTTP_GET, [] { server.send(200, "text/plain", consoleBacklog()); });
     server.on("/log.csv", HTTP_GET, [] { sendCsv(DATA_LOG_PATH, "log"); });
     server.on("/cmd", handleCmd);  // GET or POST

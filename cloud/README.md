@@ -33,4 +33,5 @@ Edit `Code.gs` here, paste it into the editor, then Deploy → Manage deployment
 - **Duplicates:** the script remembers the newest epoch stored per `device_id` (script properties `last_<device>`) and skips anything older, so device retries never duplicate rows. To re-import after clearing the `readings` tab, delete those properties, then run `upload resend` on the monitor.
 - **Size:** about 25 cells per row; a spreadsheet holds 10 million cells. With `RAW_KEEP_DAYS` = 365, two monitors stay far below that indefinitely.
 - **New log columns** (after a firmware change) are added to the right of the header row automatically; old rows keep lining up.
+- **Monitor names:** each upload carries the monitor's display name and light calibration (`name_<device>`, `r10_<device>` script properties), which the dashboard uses. Data is keyed by `device_id`, so renaming a monitor (`set name Bedroom`) keeps its history together. After editing `Code.gs`, redeploy as a new version (see above).
 - **Rows without a clock time** (logged before NTP synced) are not uploaded.

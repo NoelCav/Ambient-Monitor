@@ -9,9 +9,22 @@ static Preferences prefs;
 
 static const char* NVS_NAMESPACE = "ambient";
 
+// Unique per chip unless secrets.h sets DEVICE_ID (see config.h).
+static String defaultDeviceId() {
+#ifdef DEVICE_ID
+    return DEVICE_ID;
+#else
+    uint64_t mac = ESP.getEfuseMac();  // byte 0 of the MAC is the lowest byte
+    char id[16];
+    snprintf(id, sizeof(id), "ambient-%02x%02x%02x", (unsigned)(mac >> 24) & 0xFF,
+             (unsigned)(mac >> 32) & 0xFF, (unsigned)(mac >> 40) & 0xFF);
+    return id;
+#endif
+}
+
 // Clamp/validate in place. Out-of-range values fall back to safe defaults.
 static void validate(Params& p) {
-    if (p.deviceId.length() == 0)     p.deviceId = DEVICE_ID;
+    if (p.deviceId.length() == 0)     p.deviceId = defaultDeviceId();
     if (p.sampleIntervalS < 1)        p.sampleIntervalS = DEFAULT_SAMPLE_INTERVAL_S;
     if (p.sampleIntervalS > 86400)    p.sampleIntervalS = 86400;  // keeps ms math in range
     if (p.wifi.size() > WIFI_MAX)     p.wifi.resize(WIFI_MAX);
@@ -38,7 +51,8 @@ void paramsLoad() {
         WifiNet w = {prefs.getString("wifi_ssid", WIFI_SSID), prefs.getString("wifi_pass", WIFI_PASSWORD)};
         if (w.ssid.length()) g_params.wifi.push_back(w);
     }
-    g_params.deviceId        = prefs.getString("device_id", DEVICE_ID);
+    g_params.deviceId        = prefs.getString("device_id", "");  // "" -> defaultDeviceId()
+    g_params.name            = prefs.getString("name", "");
     g_params.sampleIntervalS = prefs.getUInt("sample_s", DEFAULT_SAMPLE_INTERVAL_S);
     g_params.testMode        = prefs.getBool("live_dbg", DEFAULT_TEST_MODE);  // key predates the name
     g_params.ledOn           = prefs.getBool("led", true);
@@ -52,8 +66,8 @@ void paramsLoad() {
 
     String nets;
     for (const WifiNet& w : g_params.wifi) nets += (nets.length() ? ", " : "") + w.ssid;
-    Console.printf("Params: device=%s wifi=[%s] sample=%us test=%s\n", g_params.deviceId.c_str(),
-        nets.c_str(), (unsigned)g_params.sampleIntervalS, g_params.testMode ? "on" : "off");
+    Console.printf("Params: device=%s name=%s wifi=[%s] sample=%us test=%s\n", g_params.deviceId.c_str(),
+        g_params.name.c_str(), nets.c_str(), (unsigned)g_params.sampleIntervalS, g_params.testMode ? "on" : "off");
 }
 
 void paramsSave(const Params& in) {
@@ -72,6 +86,7 @@ void paramsSave(const Params& in) {
         }
     }
     prefs.putString("device_id", p.deviceId);
+    prefs.putString("name", p.name);
     prefs.putUInt("sample_s", p.sampleIntervalS);
     prefs.putBool("live_dbg", p.testMode);
     prefs.putBool("led", p.ledOn);

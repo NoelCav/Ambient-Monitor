@@ -110,7 +110,7 @@ def discover(seconds=3.0):
             except OSError:
                 continue
         info = txt.get(inst, {})
-        found.append({'name': info.get('device_id', host.replace('.local', '')), 'ip': ip, 'port': port,
+        found.append({'name': info.get('name') or info.get('device_id', host.replace('.local', '')), 'ip': ip, 'port': port,
                       'build': info.get('build', '?')})
     return found
 

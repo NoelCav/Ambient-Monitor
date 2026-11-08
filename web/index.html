@@ -24,19 +24,21 @@ body{max-width:980px}
 // colours and charts come from common.js, the same as the device's own page.
 var RANGES=[['24 hours',86400],['7 days',604800],['30 days',2592000],['1 year',31536000]];
 var STALE_S=1800;  // no data for 30 min: probably off or offline
-var range=86400,R10={};
+var range=86400,R10={},NAMES={};
 try{range=+localStorage.getItem('dash-range')||range}catch(e){}
 sections({now:1,hist:1},'dash-open',function(k){if(k=="hist")loadHistory()});
 
 function api(q){return fetch(DATA_URL+'?'+q).then(function(r){return r.json()})}
-// The web app answers {columns, rows: [[...]], r10}; turn rows into objects keyed by column.
-function rowsOf(j){R10=j.r10||R10;return j.rows.map(function(a){var o={};
+// The web app answers {columns, rows: [[...]], r10, names}; turn rows into
+// objects keyed by column. Monitors are keyed by device_id and shown by name.
+function label(id){return NAMES[id]||id}
+function rowsOf(j){R10=j.r10||R10;NAMES=j.names||NAMES;return j.rows.map(function(a){var o={};
  j.columns.forEach(function(c,i){o[c]=a[i]===''?NaN:a[i]});return o})}
 
 function now(){api('latest=1').then(function(j){
- var rows=rowsOf(j).sort(function(a,b){return a.device_id<b.device_id?-1:1}),t=Date.now()/1000;
+ var rows=rowsOf(j).sort(function(a,b){return label(a.device_id)<label(b.device_id)?-1:1}),t=Date.now()/1000;
  $('now').innerHTML=rows.length?'<div class="mons">'+rows.map(function(r){var age=t-r.epoch;
-  return '<div><h3>'+esc(r.device_id)+' &middot; '+(age>STALE_S?'<span style="color:'+YEL+'">no data for '+dur(age)+'</span>':dur(age)+' ago')+'</h3>'+
+  return '<div><h3>'+esc(label(r.device_id))+' &middot; '+(age>STALE_S?'<span style="color:'+YEL+'">no data for '+dur(age)+'</span>':dur(age)+' ago')+'</h3>'+
    readings(rowReading(r,R10[r.device_id]),'No reading')+'</div>'}).join('')+'</div>':'<div class="muted">No readings uploaded yet.</div>';
  set('sub',rows.length+' monitor'+(rows.length==1?'':'s')+' · updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}));
 }).catch(function(){set('sub','Could not reach the data source.')})}
@@ -49,7 +51,7 @@ function loadHistory(){var to=Math.floor(Date.now()/1000),hourly=range>604800;
  $('charts').innerHTML='<div class="muted">Loading…</div>';
  api('from='+(to-range)+'&to='+to+(hourly?'&res=hour':'')).then(function(j){var by={};
   rowsOf(j).forEach(function(r){(by[r.device_id]=by[r.device_id]||[]).push(r)});
-  var mons=Object.keys(by).sort().map(function(d){return {name:d,r10:R10[d],rows:by[d].sort(function(a,b){return a.epoch-b.epoch})}});
+  var mons=Object.keys(by).sort(function(a,b){return label(a)<label(b)?-1:1}).map(function(d){return {name:label(d),r10:R10[d],rows:by[d].sort(function(a,b){return a.epoch-b.epoch})}});
   charts($('charts'),mons,hourly?'Hourly averages.':'')
  }).catch(function(){$('charts').innerHTML='<div class="muted">Could not load the history.</div>'})}
 

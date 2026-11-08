@@ -48,7 +48,8 @@ String statusJson() {
     String j = "{\"sample\":" + readingJson(s.sample);
     j += ",\"live\":" + readingJson(s.live, diag);
 
-    j += ",\"sys\":{\"uptime_s\":" + String(millis() / 1000);
+    j += ",\"sys\":{\"name\":" + jsonStr(deviceLabel(params())) + ",\"id\":" + jsonStr(params().deviceId);
+    j += ",\"uptime_s\":" + String(millis() / 1000);
     j += ",\"reset\":\"" + String(resetReasonStr()) + "\"";
     j += ",\"heap\":" + String(ESP.getFreeHeap());
     j += ",\"fw\":\"" + String(firmwareState()) + "\",\"build\":\"" + String(buildTime()) + "\"";

@@ -1,6 +1,6 @@
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ambient Monitor</title>
+<title>%NAME% · Ambient Monitor</title>
 <link rel="stylesheet" href="/common.css?v=%BUILD%">
 <script src="/common.js?v=%BUILD%"></script>
 <style>
@@ -17,7 +17,7 @@ a.b{display:inline-block;border:1px solid var(--line);border-radius:6px;backgrou
 pre{background:var(--pre);border:1px solid var(--line);border-radius:6px;padding:8px;height:45vh;overflow:auto;font-size:13px;white-space:pre-wrap;word-break:break-all;margin:10px 0 0}
 .line{display:flex;gap:8px;align-items:center}.line input{flex:1}.line button{margin:0}
 </style></head><body>
-<h1>Ambient Monitor</h1><div class="sub">%DEVICE% &middot; <span id="upd">connecting&hellip;</span></div>
+<h1>%NAME%</h1><div class="sub">Ambient Monitor &middot; <span id="upd">connecting&hellip;</span></div>
 
 <div class="sec" onclick="tog('cur')">Last sample<span class="pm" id="pm-cur"></span></div>
 <div id="cur"><div class="warn hide" id="cwarn"></div><div id="curb"></div><div class="muted" id="src"></div></div>
@@ -53,11 +53,12 @@ pre{background:var(--pre);border:1px solid var(--line);border-radius:6px;padding
 <div class="line"><input type="text" id="wssid" placeholder="network name" autocomplete="off">
 <input type="password" id="wpass" placeholder="password (blank if open)" autocomplete="new-password"></div>
 <button type="submit" class="pri">Add</button></form><div class="msg hide" id="wmsg"></div>
-<h3>Device</h3><form method="POST" action="/save">
-<label>Device ID <span class="muted">(also the .local name; applies on reboot)</span></label><input type="text" name="device_id" value="%DEVICE%">
+<h3>Device</h3><form onsubmit="saveDevice();return false">
+<label>Name <span class="muted">(e.g. the room)</span></label><input type="text" id="sname2" maxlength="32" value="%NAMEVAL%" placeholder="%DEVICE%">
 <label>Sample every (seconds)</label>
-<input type="number" name="sample_s" min="1" max="86400" value="%SAMPLE%">
-<button type="submit" class="pri">Save &amp; reboot</button></form></div>
+<input type="number" id="ssec" min="1" max="86400" value="%SAMPLE%">
+<button type="submit" class="pri">Save</button></form><div class="msg hide" id="smsg"></div>
+<div class="muted">Device ID <b>%DEVICE%</b> (permanent: it keys this monitor's data, so renaming keeps the history; address %DEVICE%.local)</div></div>
 
 <script>
 // Device portal. Shared helpers, tiles, colour scales and charts are in
@@ -144,6 +145,9 @@ function wifi(){return fetch('/wifi.json').then(function(r){return r.json()}).th
 function wifiAdd(){var s=$('wssid').value.trim(),p=$('wpass').value;
  if(!s||s.indexOf('"')>=0){msg('wmsg','Enter the network name (without double quotes).');return}
  cmd('wifi add "'+s+'" '+p).then(function(x){msg('wmsg',x||'Added.');$('wssid').value='';$('wpass').value='';wifi()})}
+// Device settings: applied at once through the console commands.
+function saveDevice(){cmd('set name '+$('sname2').value.trim()).then(function(){return cmd('set sample '+$('ssec').value)})
+ .then(function(x){msg('smsg','Saved.');tick()})}
 function wifiRm(s){if(!confirm('Remove '+s+'?'))return;cmd('wifi rm "'+s+'"').then(function(x){msg('wmsg',x);wifi()})}
 // Data log: the current log on top, then saved logs (user saves and automatic
 // archives of full logs), each a box with its actions.

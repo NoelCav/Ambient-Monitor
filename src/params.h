@@ -11,7 +11,8 @@ struct WifiNet {
 // and console. The device ID applies on reboot; the rest apply immediately.
 struct Params {
     std::vector<WifiNet> wifi;  // saved networks (up to WIFI_MAX); joins the strongest in range
-    String   deviceId;
+    String   deviceId;  // permanent key for this monitor's data (Sheet, log rows, .local name)
+    String   name;      // display name, e.g. the room; "" shows the device ID
     uint32_t sampleIntervalS;
     // Test mode: the dust sensor stays on and [TEST]/[DUST] lines print every 5 s.
     bool     testMode;
@@ -22,6 +23,9 @@ struct Params {
     String   uploadUrl;   // the web app's /exec URL
     String   uploadKey;   // must match the script's UPLOAD_KEY
 };
+
+// What to call the monitor: its name, or the device ID if it has none.
+inline String deviceLabel(const Params& p) { return p.name.length() ? p.name : p.deviceId; }
 
 // Global accessor for the loaded params.
 Params& params();

@@ -14,9 +14,10 @@
 
 #define WIFI_MAX 5  // saved WiFi networks
 
-#ifndef DEVICE_ID
-#define DEVICE_ID "esp32-ambient-01"
-#endif
+// Device ID: names the monitor in the Sheet, the dashboard and its .local
+// address, so every monitor needs its own. Without a DEVICE_ID (secrets.h)
+// a new monitor defaults to "ambient-" + the last 6 hex digits of its MAC
+// (params.cpp). The ID saved in NVS (portal Settings) always wins.
 
 // --- Pins ---
 #ifndef PIN_BME_SDA

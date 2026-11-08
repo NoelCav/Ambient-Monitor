@@ -59,6 +59,7 @@ static void startMdns() {
         MDNS.addServiceTxt("arduino", "tcp", "board", "esp32s3");
         MDNS.addServiceTxt("arduino", "tcp", "auth_upload", "yes");
         MDNS.addServiceTxt("arduino", "tcp", "device_id", params().deviceId.c_str());
+        MDNS.addServiceTxt("arduino", "tcp", "name", deviceLabel(params()).c_str());
         MDNS.addServiceTxt("arduino", "tcp", "build", buildTime());
         MDNS.addService("telnet", "tcp", CONSOLE_TCP_PORT);
         Console.printf("mDNS: reachable at http://%s.local\n", host.c_str());

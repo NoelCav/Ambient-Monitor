@@ -39,9 +39,10 @@ static String urlEncode(const String& s) {
 // One POST. Returns "" on success, else a short reason.
 static String post(const String& csv) {
     const Params& p = params();
-    // r10 (the light calibration) lets the dashboard show the same lux as the device.
+    // r10 (the light calibration) and name let the dashboard show the same lux
+    // and label as the device.
     String url = p.uploadUrl + (p.uploadUrl.indexOf('?') < 0 ? "?" : "&") + "key=" + urlEncode(p.uploadKey) +
-                 "&r10=" + String(p.ldrR10, 0);
+                 "&r10=" + String(p.ldrR10, 0) + "&name=" + urlEncode(deviceLabel(p));
     WiFiClientSecure tls;
     tls.setInsecure();  // no certificate check: Google rotates certificates, and the data isn't secret
     HTTPClient http;

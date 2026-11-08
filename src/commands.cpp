@@ -34,6 +34,8 @@ static const char* const HELP =
     "  test on | test off        test mode: dust sensor stays on, live values every 5 s.\n"
     "                            'off': it sleeps until 45 s before each sample.\n"
     "  set sample <seconds>      sample interval, 1-86400.  e.g.  set sample 30\n"
+    "  set name <name>           display name, e.g. the room (set name Bedroom). Renaming\n"
+    "                            keeps the history: data is keyed by the device ID.\n"
     "\n"
     "WIFI (up to 5 saved networks; the strongest one in range is used)\n"
     "  wifi                      saved networks and the current connection\n"
@@ -96,6 +98,7 @@ static void printLogStats() {
 static void printStatus() {
     SamplerState s = samplerState();
     DustStatus d = dustStatus();
+    Console.printf("%s (device ID %s)\n", deviceLabel(params()).c_str(), params().deviceId.c_str());
     Console.printf("uptime %lu s, reset: %s, heap %u KB, firmware %s (build %s)\n", millis() / 1000,
         resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024), firmwareState(), buildTime());
     Console.printf("wifi: %s, ip %s, rssi %d dBm\n", wifiConnected() ? "connected" : "disconnected",
@@ -325,6 +328,12 @@ void commandRun(const String& raw) {
     } else if (cmd == "test") {
         if (sub == "on" || sub == "off") setTest(sub == "on");
         else Console.printf("test mode is %s (test on|off)\n", params().testMode ? "on" : "off");
+    } else if (cmd == "set" && sub == "name") {
+        Params p = params();
+        p.name = arg.substring(0, 32);
+        p.name.trim();
+        paramsSave(p);
+        Console.printf("name: %s (device ID %s)\n", deviceLabel(params()).c_str(), params().deviceId.c_str());
     } else if (cmd == "set" && sub == "sample") {
         long s = arg.toInt();
         if (s >= 1 && s <= 86400) setSampleInterval(s);
