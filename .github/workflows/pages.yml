@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: mkdir _site && cp web/index.html web/common.css web/common.js web/config.js _site/
+      # Stamp the commit onto the file links: Cloudflare caches .js/.css for
+      # hours, and a new address per deploy means updates show at once.
+      - run: sed -i "s/\(common\.css\|common\.js\|config\.js\)\"/\1?v=${GITHUB_SHA::7}\"/g" _site/index.html
       - uses: actions/upload-pages-artifact@v3
       - id: deployment
         uses: actions/deploy-pages@v4
