@@ -26,7 +26,7 @@ static const char* const HELP =
     "                            dust needs the sensor awake: 'sample' or test mode.\n"
     "                            sound = RMS avg / loudest 125 ms, light = mean (0-4095)\n"
     "  sample                    take one logged sample. If the dust sensor is asleep\n"
-    "                            it wakes, warms up (~90 s), then samples. The regular\n"
+    "                            it wakes, warms up (~45 s), then samples. The regular\n"
     "                            interval restarts from this sample.\n"
     "\n"
     "SETTINGS (apply immediately and are saved)\n"
