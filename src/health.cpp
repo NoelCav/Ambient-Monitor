@@ -1,4 +1,5 @@
 #include "health.h"
+#include "build_info.h"
 #include "config.h"
 #include "console.h"
 #include "sampler.h"
@@ -33,6 +34,8 @@ static esp_ota_img_states_t otaState() {
     esp_ota_get_state_partition(esp_ota_get_running_partition(), &s);
     return s;
 }
+
+const char* buildTime() { return BUILD_TIME; }
 
 const char* firmwareState() {
     switch (otaState()) {

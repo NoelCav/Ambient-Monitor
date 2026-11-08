@@ -40,7 +40,7 @@ String statusJson() {
     j += ",\"sys\":{\"uptime_s\":" + String(millis() / 1000);
     j += ",\"reset\":\"" + String(resetReasonStr()) + "\"";
     j += ",\"heap\":" + String(ESP.getFreeHeap());
-    j += ",\"fw\":\"" + String(firmwareState()) + "\",\"build\":\"" + String(__DATE__ " " __TIME__) + "\"";
+    j += ",\"fw\":\"" + String(firmwareState()) + "\",\"build\":\"" + String(buildTime()) + "\"";
     j += ",\"rssi\":" + String(WiFi.RSSI());
     j += ",\"test\":" + String(tf(params().testMode));
     j += ",\"sample_s\":" + String(params().sampleIntervalS);

@@ -165,7 +165,7 @@ def main():
     for d in targets:
         print('\nUpdating %s (%s)...' % (d['name'], d['ip']))
         r = subprocess.run([sys.executable, ESPOTA, '-i', d['ip'], '-p', str(d['port']), '-a', password,
-                            '-f', FIRMWARE, '-r'])
+                            '-f', FIRMWARE])
         if r.returncode:
             failed.append(d['name'])
     print('\nDone.' if not failed else '\nFailed: ' + ', '.join(failed))

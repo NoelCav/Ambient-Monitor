@@ -18,8 +18,7 @@
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Console.printf("Ambient Monitor starting. Reset reason: %s (build %s %s)\n",
-        resetReasonStr(), __DATE__, __TIME__);
+    Console.printf("Ambient Monitor starting. Reset reason: %s (build %s)\n", resetReasonStr(), buildTime());
 
     paramsLoad();
     dataLogSetup();

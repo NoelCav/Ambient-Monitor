@@ -12,3 +12,4 @@ const char* resetReasonStr();
 // previous firmware.
 void healthLoop();
 const char* firmwareState();  // "ok", "pending" (on trial) or "unknown"
+const char* buildTime();      // "YYYY-MM-DD HH:MM" of this firmware build
