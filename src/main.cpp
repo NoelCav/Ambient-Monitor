@@ -35,6 +35,21 @@ unsigned soundBlkN = 0;
 int soundP2pMaxSample = 0;  // loudest 1s block since the last sample
 int soundP2pMaxDebug = 0;   // loudest 1s block since the last debug print
 
+// Latest test-mode snapshot (refreshed every 5s while live debug is on). Feeds
+// both the [PMS]/[ENV] console lines and the portal's live test panel.
+struct LiveDiag {
+    unsigned long at_ms = 0;  // 0 = no snapshot yet
+    unsigned long pms_t_s;    // seconds since the PMS woke
+    bool pms_ok;
+    PMS5003::Data frame;
+    uint32_t frames, bad, bytes;  // in the last 5s window
+    bool bme_found, bme_ok;
+    float temp, hum, pres;
+    int sound_p2p, sound_max5s;
+    long light;
+};
+LiveDiag liveDiag;
+
 // Rolling light buffer (samples every 100ms)
 const unsigned LIGHT_BUF_SIZE = 10;
 const unsigned LIGHT_SAMPLE_INTERVAL_MS = 100;
@@ -344,7 +359,31 @@ String statusJson() {
     j += ",\"reset\":\"" + jsonEsc(resetReasonStr()) + "\"";
     j += ",\"heap\":" + String(ESP.getFreeHeap());
     j += ",\"rssi\":" + String(WiFi.RSSI());
-    j += ",\"live_debug\":" + String(params().liveDebug ? "true" : "false") + "}";
+    j += ",\"live_debug\":" + String(params().liveDebug ? "true" : "false");
+    j += ",\"sample_s\":" + String(params().sampleIntervalS);
+    j += ",\"next_sample_s\":" + String((sampleIntervalMs() - min(millis() - lastSample, (unsigned long)sampleIntervalMs())) / 1000);
+    j += ",\"log_kb\":" + String(dataLogSize() / 1024) + "}";
+
+    // Test-mode snapshot, present once the first 5s diagnostic has run.
+    const LiveDiag& d = liveDiag;
+    if (params().liveDebug && d.at_ms) {
+        const PMS5003::Data& f = d.frame;
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            ",\"live\":{\"age_s\":%lu,\"pms\":{\"ok\":%s,\"t_s\":%lu,\"atm\":[%u,%u,%u],\"cf1\":[%u,%u,%u],"
+            "\"cnt\":[%u,%u,%u,%u,%u,%u],\"dt_ms\":%lu,\"frames\":%lu,\"bad\":%lu,\"bytes\":%lu},"
+            "\"bme\":{\"found\":%s,\"ok\":%s,\"temp\":%.2f,\"hum\":%.1f,\"pres\":%.1f},"
+            "\"sound\":{\"p2p\":%d,\"max5s\":%d},\"light\":%ld}",
+            (millis() - d.at_ms) / 1000, d.pms_ok ? "true" : "false", d.pms_t_s,
+            f.pm1_0, f.pm2_5, f.pm10, f.pm1_0_cf1, f.pm2_5_cf1, f.pm10_cf1,
+            f.cnt_0_3, f.cnt_0_5, f.cnt_1_0, f.cnt_2_5, f.cnt_5_0, f.cnt_10,
+            (unsigned long)f.frameIntervalMs, (unsigned long)d.frames, (unsigned long)d.bad,
+            (unsigned long)d.bytes,
+            d.bme_found ? "true" : "false", d.bme_ok ? "true" : "false",
+            d.bme_ok ? d.temp : 0.0f, d.bme_ok ? d.hum : 0.0f, d.bme_ok ? d.pres : 0.0f,
+            d.sound_p2p, d.sound_max5s, d.light);
+        j += buf;
+    }
 
     j += "}";
     return j;
@@ -580,31 +619,44 @@ void loop() {
     if (params().liveDebug && pmsOn && now - lastPmsDebug >= 5000) {
         lastPmsDebug = now;
         PMS5003::DebugStats s = pms.getDebugStats();
-        const PMS5003::Data& f = lastPmsFrame;
-        if (s.framesDecoded > 0 || f.frameIntervalMs > 0) {
-            Console.printf("[PMS t+%lus] atm=%u/%u/%u cf1=%u/%u/%u | n>0.3=%u >0.5=%u >1=%u >2.5=%u >5=%u >10=%u"
-                          " | dt=%lums frames=%lu bad=%lu\n",
-                (now - pmsOnSince) / 1000,
-                f.pm1_0, f.pm2_5, f.pm10, f.pm1_0_cf1, f.pm2_5_cf1, f.pm10_cf1,
-                f.cnt_0_3, f.cnt_0_5, f.cnt_1_0, f.cnt_2_5, f.cnt_5_0, f.cnt_10,
-                (unsigned long)f.frameIntervalMs, (unsigned long)s.framesDecoded,
-                (unsigned long)s.checksumFailures);
-        } else {
-            Console.printf("[PMS t+%lus] no frames (bytes=%lu)\n",
-                (now - pmsOnSince) / 1000, (unsigned long)s.bytesReceived);
+        LiveDiag& d = liveDiag;
+        d.at_ms = now;
+        d.pms_t_s = (now - pmsOnSince) / 1000;
+        d.pms_ok = s.framesDecoded > 0 || lastPmsFrame.frameIntervalMs > 0;
+        d.frame = lastPmsFrame;
+        d.frames = s.framesDecoded;
+        d.bad = s.checksumFailures;
+        d.bytes = s.bytesReceived;
+        // p2p is the last 1s; max5s is the loudest 1s block since the previous print.
+        d.sound_p2p = soundPeakToPeak();
+        d.sound_max5s = soundP2pMaxDebug;
+        soundP2pMaxDebug = 0;
+        d.light = lightBufCount ? lightBufSum / (long)lightBufCount : 0;
+        d.bme_found = bmeOk;
+        d.bme_ok = bmeOk && bmeMeasure();
+        if (d.bme_ok) {
+            d.temp = bme.readTemperature();
+            d.hum = bme.readHumidity();
+            d.pres = bme.readPressure() / 100.0F;
         }
 
-        // Sound/light summary shared by both ENV variants. p2p is the last 1s;
-        // max5s is the loudest 1s block since the previous print.
+        const PMS5003::Data& f = d.frame;
+        if (d.pms_ok) {
+            Console.printf("[PMS t+%lus] atm=%u/%u/%u cf1=%u/%u/%u | n>0.3=%u >0.5=%u >1=%u >2.5=%u >5=%u >10=%u"
+                          " | dt=%lums frames=%lu bad=%lu\n",
+                d.pms_t_s,
+                f.pm1_0, f.pm2_5, f.pm10, f.pm1_0_cf1, f.pm2_5_cf1, f.pm10_cf1,
+                f.cnt_0_3, f.cnt_0_5, f.cnt_1_0, f.cnt_2_5, f.cnt_5_0, f.cnt_10,
+                (unsigned long)f.frameIntervalMs, (unsigned long)d.frames, (unsigned long)d.bad);
+        } else {
+            Console.printf("[PMS t+%lus] no frames (bytes=%lu)\n", d.pms_t_s, (unsigned long)d.bytes);
+        }
+
         char other[64];
         snprintf(other, sizeof(other), "sound p2p=%d max5s=%d | light=%ld",
-            soundPeakToPeak(), soundP2pMaxDebug,
-            lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
-        soundP2pMaxDebug = 0;
-
-        if (bmeOk && bmeMeasure()) {
-            Console.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | %s\n",
-                bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F, other);
+            d.sound_p2p, d.sound_max5s, d.light);
+        if (d.bme_ok) {
+            Console.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | %s\n", d.temp, d.hum, d.pres, other);
         } else {
             // Raw registers only on failure: shows whether the chip is asleep,
             // stuck at reset values, or gone from the bus.

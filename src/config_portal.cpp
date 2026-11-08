@@ -10,7 +10,7 @@ static WebServer server(80);
 
 extern String statusJson();  // defined in main.cpp
 
-// HTML escape for safe insertion into attribute values.
+// HTML escape for safe insertion into text and (either-quoted) attribute values.
 static String esc(const String& s) {
     String out;
     out.reserve(s.length());
@@ -21,104 +21,135 @@ static String esc(const String& s) {
             case '<':  out += "&lt;";   break;
             case '>':  out += "&gt;";   break;
             case '"':  out += "&quot;"; break;
+            case '\'': out += "&#39;";  break;
             default:   out += c;        break;
         }
     }
     return out;
 }
 
+// Portal home page: plain tables. Readings come from /status.json (polled
+// every 3 s); only the settings form values are
+// substituted server-side (%DEVICE%, %SSID%, %SAMPLE%, %LIVECHK%, %TCPPORT%).
+static const char ROOT_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%DEVICE%</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;font-size:14px;margin:0;background:#fff;color:#000}
+#top{background:#335;color:#fff;padding:8px 12px;font-size:16px}
+#top span{font-size:12px;color:#ccd;margin-left:10px}
+#wrap{max-width:720px;padding:4px 12px 20px}
+h3{background:#e4e4ec;margin:16px 0 0;padding:4px 6px;font-size:14px}
+table{border-collapse:collapse;width:100%}
+td{padding:3px 6px;border-bottom:1px solid #ddd;vertical-align:top}
+td.k{width:38%;color:#444}
+td.n{text-align:right}
+.note{color:#666;font-size:12px;margin:4px 6px}
+input[type=text],input[type=password],input[type=number]{width:100%;max-width:260px;box-sizing:border-box}
+</style></head><body>
+<div id="top">%DEVICE% <span id="upd">loading...</span></div>
+<div id="wrap">
+
+<h3>Readings</h3>
+<table>
+<tr><td class="k">Temperature</td><td id="t">-</td></tr>
+<tr><td class="k">Humidity</td><td id="h">-</td></tr>
+<tr><td class="k">Pressure</td><td id="p">-</td></tr>
+<tr><td class="k">PM1.0 / PM2.5 / PM10</td><td id="pm">-</td></tr>
+<tr><td class="k">Sound (peak-to-peak)</td><td id="snd">-</td></tr>
+<tr><td class="k">Light (0-4095)</td><td id="lt">-</td></tr>
+</table>
+<div class="note" id="src"></div>
+
+<div id="test" style="display:none">
+<h3>Test mode (live, updated every 5 s)</h3>
+<table>
+<tr><td class="k">PMS awake for</td><td id="pt">-</td></tr>
+<tr><td class="k">PM atmospheric (1.0 / 2.5 / 10)</td><td id="pa">-</td></tr>
+<tr><td class="k">PM CF=1 (1.0 / 2.5 / 10)</td><td id="pc">-</td></tr>
+<tr><td class="k">Particles per 0.1 L &gt;0.3 / 0.5 / 1.0 &micro;m</td><td id="n1">-</td></tr>
+<tr><td class="k">Particles per 0.1 L &gt;2.5 / 5 / 10 &micro;m</td><td id="n2">-</td></tr>
+<tr><td class="k">Frame interval</td><td id="dt">-</td></tr>
+<tr><td class="k">Frames / checksum errors (last 5 s)</td><td id="fr">-</td></tr>
+<tr><td class="k">Loudest 1 s in last 5 s</td><td id="mx">-</td></tr>
+</table>
+</div>
+
+<h3>System</h3>
+<table>
+<tr><td class="k">Uptime</td><td id="up">-</td></tr>
+<tr><td class="k">Last reset reason</td><td id="rr">-</td></tr>
+<tr><td class="k">WiFi signal</td><td id="ws">-</td></tr>
+<tr><td class="k">Free memory</td><td id="hp">-</td></tr>
+<tr><td class="k">Mode</td><td id="md">-</td></tr>
+<tr><td class="k">Next sample</td><td id="nx">-</td></tr>
+<tr><td class="k">Data log</td><td id="lg">-</td></tr>
+</table>
+<p class="note"><a href="/log.csv">Download log</a> | <a href="/log.old.csv">Download older log</a> |
+<a href="/console">Console</a> (also TCP port %TCPPORT%)</p>
+<form method="POST" action="/log/clear" onsubmit="return confirm('Delete the whole data log?')" style="margin:0 6px">
+<input type="submit" value="Clear log"></form>
+
+<h3>Settings</h3>
+<form method="POST" action="/save">
+<table>
+<tr><td class="k">Device ID</td><td><input type="text" name="device_id" value="%DEVICE%"></td></tr>
+<tr><td class="k">WiFi SSID</td><td><input type="text" name="wifi_ssid" value="%SSID%"></td></tr>
+<tr><td class="k">WiFi password</td><td><input type="password" name="wifi_pass" placeholder="unchanged"></td></tr>
+<tr><td class="k">Sample interval (s)</td><td><input type="number" name="sample_s" min="1" max="86400" value="%SAMPLE%"></td></tr>
+<tr><td class="k">Test mode</td><td><input type="checkbox" name="live_dbg" %LIVECHK%>
+ PMS always on, live diagnostics every 5 s</td></tr>
+</table>
+<p style="margin:6px"><input type="submit" value="Save and reboot"></p>
+</form>
+
+</div><script>
+function $(i){return document.getElementById(i)}
+function set(i,v){$(i).textContent=v}
+function dur(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':(s/3600).toFixed(1)+' h'}
+function pmLvl(v){return v<=12?'Good':v<=35?'Moderate':v<=55?'Unhealthy for sensitive groups':v<=150?'Unhealthy':v<=250?'Very unhealthy':'Hazardous'}
+function lightLvl(v){return v>=4095?'saturated':v>3000?'bright':v>2000?'bright indoor':v>1000?'indoor lighting':v>400?'dim':'dark'}
+function render(d){
+  var s=d.sys,L=d.live,b=d.bme,p=d.pms;
+  set('upd','updated '+new Date().toLocaleTimeString());
+  // In test mode show the live snapshot (<=5 s old); otherwise the last sample.
+  var e=L&&L.bme.ok?{t:L.bme.temp,h:L.bme.hum,p:L.bme.pres}:(b.valid?{t:b.temp,h:b.hum,p:b.pres}:null);
+  if(e){set('t',e.t.toFixed(1)+' °C');set('h',e.h.toFixed(1)+' %');set('p',e.p.toFixed(1)+' hPa');}
+  else{var m=L&&L.bme.found?'BME measurement failed':(L?'BME not found':'no sample yet');set('t',m);set('h','-');set('p','-');}
+  var pm=L&&L.pms.ok?L.pms.atm:(p.valid?[p.pm1,p.pm25,p.pm10]:null);
+  set('pm',pm?pm[0]+' / '+pm[1]+' / '+pm[2]+' µg/m³  ('+pmLvl(pm[1])+')'
+    :(s.live_debug?'waiting for PMS frames':'PMS asleep between samples'));
+  var have=L||d.have_sample;
+  set('snd',have?(L?L.sound.p2p:d.sound.p2p)+'  (quiet ~10, loud clap 500+)':'-');
+  var lt=L?L.light:d.light.adc;set('lt',have?lt+'  ('+lightLvl(lt)+')':'-');
+  set('src',L?'Live values from test mode.':(d.have_sample?'From the last sample, '+dur(d.age_s)+' ago.':'No sample yet.'));
+  $('test').style.display=L?'':'none';
+  if(L){var P=L.pms;
+    set('pt',dur(P.t_s)+(P.t_s<30?'  (warming up, stable after 30 s)':''));
+    set('pa',P.atm.join(' / '));set('pc',P.cf1.join(' / '));
+    set('n1',P.cnt.slice(0,3).join(' / '));set('n2',P.cnt.slice(3).join(' / '));
+    set('dt',P.ok?P.dt_ms+' ms':'no frames ('+P.bytes+' bytes received)');
+    set('fr',P.frames+' / '+P.bad);set('mx',L.sound.max5s);}
+  set('up',dur(s.uptime_s));set('rr',s.reset);set('ws',s.rssi+' dBm');
+  set('hp',Math.round(s.heap/1024)+' KB');
+  set('md',s.live_debug?'Test mode':'Normal (PMS duty-cycled)');
+  set('nx','in '+dur(s.next_sample_s)+' (every '+dur(s.sample_s)+')');
+  set('lg',s.log_kb+' KB');
+}
+function tick(){fetch('/status.json').then(function(r){return r.json()}).then(render)
+  .catch(function(){set('upd','not responding, retrying...')})}
+tick();setInterval(tick,3000);
+</script></body></html>)HTML";
+
 static void handleRoot() {
     const Params& p = params();
-    String liveChecked = p.liveDebug ? "checked" : "";
-
-    String html =
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Ambient Monitor Config</title>"
-        "<style>body{font-family:sans-serif;max-width:480px;margin:24px auto;padding:0 16px}"
-        "label{display:block;margin:14px 0 4px;font-weight:600}"
-        "input[type=text],input[type=password],input[type=number]{width:100%;padding:8px;"
-        "box-sizing:border-box;font-size:16px}"
-        "button{margin-top:20px;padding:12px 20px;font-size:16px}"
-        ".hint{color:#666;font-size:13px;font-weight:400}"
-        ".card{border:1px solid #ddd;border-radius:8px;padding:12px 16px;margin:12px 0;"
-        "background:#fafafa}.card h3{margin:0 0 8px}.card .row{margin:4px 0}"
-        ".card .val{font-weight:600}.muted{color:#888;font-size:13px}</style></head><body>"
-        "<h2>Ambient Monitor</h2>"
-
-        "<div id='status' class='card'>Loading current reading&hellip;</div>"
-
-        "<form method='POST' action='/save'>"
-
-        "<label>Device ID</label>"
-        "<input type='text' name='device_id' value='" + esc(p.deviceId) + "'>"
-
-        "<label>WiFi SSID</label>"
-        "<input type='text' name='wifi_ssid' value='" + esc(p.wifiSsid) + "'>"
-
-        "<label>WiFi Password <span class='hint'>(leave blank to keep current)</span></label>"
-        "<input type='password' name='wifi_pass' value='' placeholder='unchanged'>"
-
-        "<label>Sample interval (seconds)</label>"
-        "<input type='number' name='sample_s' min='1' max='86400' value='" + String(p.sampleIntervalS) + "'>"
-
-        "<label><input type='checkbox' name='live_dbg' " + liveChecked + "> Test mode</label>"
-        "<span class='hint'>PMS stays powered and live diagnostics print every 5 s "
-        "(see Console). Off = PMS duty-cycled between samples.</span>"
-
-        "<button type='submit'>Save &amp; Reboot</button></form>"
-
-        "<h3>Console</h3>"
-        "<p><a href='/console'>Live console</a> "
-        "<span class='hint'>(recent serial output; also raw TCP on port "
-        + String(CONSOLE_TCP_PORT) + ")</span></p>"
-
-        "<h3>Data log</h3>"
-        + (dataLogMounted()
-            ? "<p><a href='/log.csv'>Download log.csv</a> &middot; "
-              "<a href='/log.old.csv'>log.old.csv</a> "
-              "<span class='hint'>(" + String(dataLogSize() / 1024) + " KB used; "
-              "one row per sample, survives firmware updates)</span></p>"
-              "<form method='POST' action='/log/clear' "
-              "onsubmit=\"return confirm('Delete the whole data log?')\">"
-              "<button type='submit'>Clear log</button></form>"
-            : String("<p class='hint'>Log storage not mounted.</p>")) +
-
-        "<script>"
-        "function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}"
-        "function row(label,val,lvl){"
-        "var l=lvl?(' <span class=\"muted\">'+esc(lvl)+'</span>'):'';"
-        "return '<div class=\"row\">'+label+': <span class=\"val\">'+esc(val)+'</span>'+l+'</div>';}"
-        "function render(d){"
-        "var h='<h3>Current reading</h3>';"
-        "if(!d.have_sample){h+='<div class=\"muted\">Waiting for first sample&hellip; (up '"
-        "+d.sys.uptime_s+' s, reset: '+esc(d.sys.reset)+')</div>';"
-        "document.getElementById('status').innerHTML=h;return;}"
-        "var b=d.bme;"
-        "if(b.valid){h+=row('Temp',b.temp.toFixed(1)+' &deg;C',b.tempLvl);"
-        "h+=row('Humidity',b.hum.toFixed(1)+' %',b.humLvl);"
-        "h+=row('Pressure',b.pres.toFixed(1)+' hPa',b.presLvl);}"
-        "else{h+='<div class=\"row muted\">BME: no valid reading</div>';}"
-        "h+=row('Sound p2p',d.sound.p2p+' (loudest 1 s since last sample: '+d.sound.p2p_max+')');"
-        "h+=row('Light',d.light.adc,d.light.lvl);"
-        "var p=d.pms;"
-        "if(p.valid){h+=row('PM1.0',p.pm1+' &micro;g/m&sup3;',p.pm1Lvl);"
-        "h+=row('PM2.5',p.pm25+' &micro;g/m&sup3;',p.pm25Lvl);"
-        "h+=row('PM10',p.pm10+' &micro;g/m&sup3;',p.pm10Lvl);}"
-        "else{h+='<div class=\"row muted\">PMS: no data</div>';}"
-        "var s=d.sys;"
-        "h+='<div class=\"muted\">up '+Math.floor(s.uptime_s/60)+' min &middot; reset: '+esc(s.reset)"
-        "+' &middot; heap '+Math.round(s.heap/1024)+' KB &middot; WiFi '+s.rssi+' dBm</div>';"
-        "h+='<div class=\"muted\" id=\"age\">updated '+d.age_s+'s ago</div>';"
-        "document.getElementById('status').innerHTML=h;}"
-        "function tick(){fetch('/status.json').then(function(r){return r.json();})"
-        ".then(render).catch(function(){var a=document.getElementById('age');"
-        "if(a)a.textContent='reconnecting\\u2026';});}"
-        "tick();setInterval(tick,3000);"
-        "</script>"
-
-        "</body></html>";
-
+    String html = FPSTR(ROOT_PAGE);
+    html.replace("%DEVICE%", esc(p.deviceId));
+    html.replace("%SSID%", esc(p.wifiSsid));
+    html.replace("%SAMPLE%", String(p.sampleIntervalS));
+    html.replace("%LIVECHK%", p.liveDebug ? "checked" : "");
+    html.replace("%TCPPORT%", String(CONSOLE_TCP_PORT));
     server.send(200, "text/html", html);
 }
 
