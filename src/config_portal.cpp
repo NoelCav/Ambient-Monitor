@@ -144,7 +144,8 @@ function tile(l,v,u,q){var m=q?q[0]:'',c=q?q[1]:null,tc=c&&!q[2];
  (u?' <small>'+esc(u)+'</small>':'')+'</div><div class="m"'+(tc?' style="color:'+c+'"':'')+'>'+(m?esc(m):'&nbsp;')+'</div></div>'}
 function grid(t){return '<div class="g">'+t+'</div>'}
 function none(n,m){var t='';n.forEach(function(l){t+=tile(l,'–','',[m,null])});return t}
-// Colour scales: smooth gradients between [value, colour] stops.
+// Colour scales: smooth gradients between [value, colour] stops. The level
+// words and thresholds match lib/ambient/levels.h (console): keep them in step.
 var STABLE_S=30;  // PMS5003 datasheet: data stable 30 s after waking
 var GREEN='#16a34a',YEL='#ca8a04',ORG='#ea580c',RED='#dc2626',PUR='#9333ea',BLUE='#2563eb',UG='µg/m³';
 function hex(c){return [1,3,5].map(function(i){return parseInt(c.substr(i,2),16)})}

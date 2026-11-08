@@ -85,7 +85,7 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 ## Conventions
 - Sensor work belongs in its task; loop() is network-only. Never call `analogRead()` on ADC1 pins (the continuous ADC owns ADC1).
 - Log through `Console`, not `Serial`.
-- Reading levels and colours live only in the portal JS; the firmware reports numbers.
+- Level words: `lib/ambient/levels.h` (console) and the portal JS (words + colours) share the same thresholds; keep them in step.
 
 ## Dependencies
 - `adafruit/Adafruit BME280 Library@^2.1.2` (everything else is in the arduino-esp32 core)

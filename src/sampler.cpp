@@ -1,5 +1,6 @@
 #include "sampler.h"
 #include "air_quality.h"
+#include "levels.h"
 #include "climate.h"
 #include "config.h"
 #include "console.h"
@@ -32,7 +33,7 @@ static Reading takeReading(Span span) {
 
 String readingText(const Reading& r, const char* what) {
     bool all = !strcmp(what, "all");
-    char buf[112];
+    char buf[176];
     String out;
     auto part = [&](const char* name) {
         if (!all && strcmp(what, name)) return false;
@@ -40,23 +41,29 @@ String readingText(const Reading& r, const char* what) {
         return true;
     };
     if (part("climate")) {
-        if (r.climate.ok) snprintf(buf, sizeof(buf), "climate %.2f C, %.1f %% RH, %.1f hPa", r.climate.temp, r.climate.hum, r.climate.pres);
+        const Climate& c = r.climate;
+        if (c.ok) snprintf(buf, sizeof(buf), "climate %.2f C (%s), %.1f %% RH (%s), %.1f hPa (%s)",
+            c.temp, tempLevel(c.temp), c.hum, humidityLevel(c.hum), c.pres, pressureLevel(c.pres));
         else snprintf(buf, sizeof(buf), "climate: no reading (try diag climate)");
         out += buf;
     }
     if (part("dust")) {
-        if (r.dustOk) snprintf(buf, sizeof(buf), "dust PM1/2.5/10 %u/%u/%u ug/m3 (PM2.5 est %.0f; %u frames, awake %lu s)",
-            r.dust.pm[0], r.dust.pm[1], r.dust.pm[2], pm25AltCf3(r.dust), r.dustFrames, (unsigned long)r.dustAwakeS);
+        float est = pm25AltCf3(r.dust);
+        if (r.dustOk) snprintf(buf, sizeof(buf),
+            "dust PM2.5 est %.0f (%s), raw PM1/2.5/10 %u/%u/%u ug/m3 (PM10 %s); %u frames, awake %lu s",
+            est, pm25Level(est), r.dust.pm[0], r.dust.pm[1], r.dust.pm[2], pm10Level(r.dust.pm[2]),
+            r.dustFrames, (unsigned long)r.dustAwakeS);
         else if (r.dustAwakeS) snprintf(buf, sizeof(buf), "dust: no frames yet (awake %lu s)", (unsigned long)r.dustAwakeS);
         else snprintf(buf, sizeof(buf), "dust: asleep ('sample' or test mode wakes it)");
         out += buf;
     }
     if (part("sound")) {
-        snprintf(buf, sizeof(buf), "sound %.1f avg / %.1f peak", r.soundAvg, r.soundPeak);
+        snprintf(buf, sizeof(buf), "sound %.1f avg (%s) / %.1f peak (%s)",
+            r.soundAvg, soundLevel(r.soundAvg), r.soundPeak, soundLevel(r.soundPeak));
         out += buf;
     }
     if (part("light")) {
-        snprintf(buf, sizeof(buf), "light %.0f", r.light);
+        snprintf(buf, sizeof(buf), "light %.0f (%s)", r.light, lightLevel(r.light));
         out += buf;
     }
     return out;

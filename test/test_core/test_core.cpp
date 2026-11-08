@@ -4,6 +4,7 @@
 #include "pms_parser.h"
 #include "stats.h"
 #include "air_quality.h"
+#include "levels.h"
 
 void setUp() {}
 void tearDown() {}
@@ -138,6 +139,16 @@ void test_alt_cf3_matches_published_formula() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.0f, pm25AltCf3(z));
 }
 
+void test_levels_band_edges_are_inclusive() {
+    TEST_ASSERT_EQUAL_STRING("good", pm25Level(9.0f));
+    TEST_ASSERT_EQUAL_STRING("moderate", pm25Level(9.1f));
+    TEST_ASSERT_EQUAL_STRING("hazardous", pm25Level(500));
+    TEST_ASSERT_EQUAL_STRING("comfortable", tempLevel(22.5f));
+    TEST_ASSERT_EQUAL_STRING("comfortable", humidityLevel(36));
+    TEST_ASSERT_EQUAL_STRING("quiet", soundLevel(1.3f));
+    TEST_ASSERT_EQUAL_STRING("saturated", lightLevel(4095));
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parser_decodes_fields);
@@ -148,5 +159,6 @@ int main() {
     RUN_TEST(test_sound_light_stats_average_energy_and_peak);
     RUN_TEST(test_frame_average_rolls_and_rounds);
     RUN_TEST(test_alt_cf3_matches_published_formula);
+    RUN_TEST(test_levels_band_edges_are_inclusive);
     return UNITY_END();
 }
