@@ -24,6 +24,15 @@ Monitors upload their log rows to a Google Sheet through a small Apps Script web
    `upload` shows the status; within a minute or so the rows from `log.csv` appear in the `readings` tab. Device details in the portal shows the upload state too.
 7. **Point the dashboard at it:** put the same URL in `dashboard/config.js`.
 
+## The dashboard at noelcaverly.com/monitor
+
+The dashboard is published by GitHub Pages at https://noelcav.github.io/Ambient-Monitor/ (`.github/workflows/pages.yml`; one-time: repo Settings -> Pages -> Source: **GitHub Actions**). To show it at **https://www.noelcaverly.com/monitor/**, the site's Cloudflare zone runs a small Worker (`cloudflare/monitor-worker.js`) that fetches it from GitHub Pages:
+
+1. Cloudflare dashboard -> Workers & Pages -> Create -> Worker. Name it e.g. `monitor`, replace its code with `cloudflare/monitor-worker.js`, Deploy.
+2. The Worker -> Settings -> Domains & Routes -> Add -> Route: `www.noelcaverly.com/monitor*`, zone `noelcaverly.com`.
+
+The free plan's 100,000 requests a day is far more than this needs. Until the Worker exists, the site's own `/monitor/` page forwards to the GitHub Pages address.
+
 ## Updating the script
 
 Edit `Code.gs` here, paste it into the editor, then Deploy → Manage deployments → edit (pencil) → Version: **New version** → Deploy. Keeping the same deployment keeps the same URL, so monitors and dashboard need no change.

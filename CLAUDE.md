@@ -1,7 +1,7 @@
 # Ambient Monitor — ESP32-S3
 
 ## Project overview
-Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 USB-serial). Reads BME280 (temp/humidity/pressure), PMS5003 (particulate matter), KY-037 (sound) and a photoresistor (light). Logs to a persistent on-device CSV and is debugged and updated entirely over WiFi (web portal, network console, OTA). Uploads to a Google Sheet (Apps Script web app, `cloud/`), and a dashboard for all monitors is served by this repo's GitHub Pages (`web/index.html`, https://noelcav.github.io/Ambient-Monitor/). The earlier Firestore backend was removed on 2026-11-08 (in git history).
+Environmental monitoring firmware for an ESP32-S3 DevKit C1 (N16R8 clone, CH343 USB-serial). Reads BME280 (temp/humidity/pressure), PMS5003 (particulate matter), KY-037 (sound) and a photoresistor (light). Logs to a persistent on-device CSV and is debugged and updated entirely over WiFi (web portal, network console, OTA). Uploads to a Google Sheet (Apps Script web app, `cloud/`), and a dashboard for all monitors is served by this repo's GitHub Pages (`web/index.html`, https://noelcav.github.io/Ambient-Monitor/), shown at https://www.noelcaverly.com/monitor/ through a Cloudflare Worker (`cloud/cloudflare/monitor-worker.js`). The earlier Firestore backend was removed on 2026-11-08 (in git history).
 
 ## Build / flash
 - **PlatformIO**, Arduino framework (core 3.x), board `esp32-s3-devkitc-1`. CLI at `~/.platformio/penv/Scripts/pio.exe` on the user's desktop.
