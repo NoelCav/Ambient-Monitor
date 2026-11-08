@@ -60,7 +60,8 @@
 
 // --- Timing and measurement ---
 #ifndef PMS_WARMUP_MS
-#define PMS_WARMUP_MS 90000  // dust sensor on this long before each sample (datasheet: stable after 30 s)
+#define PMS_WARMUP_MS 45000  // dust sensor on this long before each sample: datasheet says stable after 30 s;
+                             // a 2026-11-08 test read steady within 10-30 s of waking (see CLAUDE.md)
 #endif
 #define PMS_AVG_FRAMES 10        // dust readings average the last 10 frames (~10 s)
 #define LIVE_INTERVAL_MS 5000    // test reading (and [TEST] console line) period

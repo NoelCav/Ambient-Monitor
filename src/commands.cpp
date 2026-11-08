@@ -31,7 +31,7 @@ static const char* const HELP =
     "\n"
     "SETTINGS (apply immediately and are saved)\n"
     "  test on | test off        test mode: dust sensor stays on, live values every 5 s.\n"
-    "                            'off': it sleeps until 90 s before each sample.\n"
+    "                            'off': it sleeps until 45 s before each sample.\n"
     "  set sample <seconds>      sample interval, 1-86400.  e.g.  set sample 30\n"
     "\n"
     "WIFI (up to 5 saved networks; the strongest one in range is used)\n"
