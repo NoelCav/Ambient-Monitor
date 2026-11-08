@@ -1,8 +1,10 @@
 #include "wifi_manager.h"
+#include "console.h"
 #include "config.h"
 #include "params.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 
 static unsigned long lastReconnectAttempt = 0;
@@ -19,7 +21,7 @@ static void checkNtpSync() {
         ntpSynced = true;
         struct tm timeinfo;
         localtime_r(&now, &timeinfo);
-        Serial.printf("NTP: time synced — %04d-%02d-%02d %02d:%02d:%02d\n",
+        Console.printf("NTP: time synced — %04d-%02d-%02d %02d:%02d:%02d\n",
             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     }
@@ -49,9 +51,11 @@ static void startMdns() {
     String host = mdnsHostname();
     if (MDNS.begin(host.c_str())) {
         MDNS.addService("http", "tcp", 80);
-        Serial.printf("mDNS: reachable at http://%s.local\n", host.c_str());
+        MDNS.addService("arduino", "tcp", 3232);  // OTA, for IDE discovery
+        MDNS.addService("telnet", "tcp", CONSOLE_TCP_PORT);
+        Console.printf("mDNS: reachable at http://%s.local\n", host.c_str());
     } else {
-        Serial.println("mDNS: failed to start");
+        Console.println("mDNS: failed to start");
     }
 }
 
@@ -61,38 +65,63 @@ static void startAp() {
     WiFi.mode(WIFI_AP_STA);  // keep STA so background reconnect can still succeed
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     apActive = true;
-    Serial.printf("WiFi: AP fallback active — SSID '%s', IP %s\n",
+    Console.printf("WiFi: AP fallback active — SSID '%s', IP %s\n",
         AP_SSID, WiFi.softAPIP().toString().c_str());
 }
 
+// Over-the-air firmware updates on UDP/TCP 3232 (`pio run -e ota -t upload`).
+// Listens on every interface, so it also works via the AP at 192.168.4.1.
+// mDNS is ours (startMdns), so ArduinoOTA's own responder is disabled.
+static void startOta() {
+    ArduinoOTA.setHostname(mdnsHostname().c_str());
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.setMdnsEnabled(false);
+    ArduinoOTA.onStart([] { Console.println("OTA: update starting"); });
+    ArduinoOTA.onProgress([](unsigned done, unsigned total) {
+        static unsigned lastPct = 100;
+        unsigned pct = total ? done * 100 / total : 0;
+        if (pct / 10 != lastPct / 10) Console.printf("OTA: %u%%\n", pct);
+        lastPct = pct;
+    });
+    ArduinoOTA.onEnd([] { Console.println("OTA: done, rebooting"); });
+    ArduinoOTA.onError([](ota_error_t e) { Console.printf("OTA: error %u\n", (unsigned)e); });
+    ArduinoOTA.begin();
+    Console.println("OTA: listening on port 3232");
+}
+
 void wifiSetup() {
+    // DHCP hostname must be set before the interface starts.
+    WiFi.setHostname(mdnsHostname().c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(params().wifiSsid.c_str(), params().wifiPassword.c_str());
-    Serial.printf("WiFi: connecting to %s", params().wifiSsid.c_str());
+    Console.printf("WiFi: connecting to %s", params().wifiSsid.c_str());
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
         delay(250);
-        Serial.print(".");
+        Console.print(".");
     }
-    Serial.println();
+    Console.println();
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("WiFi: connected, IP %s\n", WiFi.localIP().toString().c_str());
+        Console.printf("WiFi: connected, IP %s\n", WiFi.localIP().toString().c_str());
         configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-        Serial.println("NTP: time sync requested");
+        Console.println("NTP: time sync requested");
         startMdns();
     } else {
-        Serial.println("WiFi: connection failed, starting AP fallback + background retry");
+        Console.println("WiFi: connection failed, starting AP fallback + background retry");
         startAp();
     }
+    startOta();
 }
 
 void wifiLoop() {
+    ArduinoOTA.handle();
+
     if (WiFi.status() == WL_CONNECTED) {
         if (wasDisconnected) {
             wasDisconnected = false;
-            Serial.printf("WiFi: reconnected, IP %s\n", WiFi.localIP().toString().c_str());
+            Console.printf("WiFi: reconnected, IP %s\n", WiFi.localIP().toString().c_str());
             configTime(0, 0, "pool.ntp.org", "time.nist.gov");
             MDNS.end();
             startMdns();  // re-bind the responder after the drop
@@ -105,7 +134,7 @@ void wifiLoop() {
     unsigned long now = millis();
     if (now - lastReconnectAttempt >= RECONNECT_INTERVAL_MS) {
         lastReconnectAttempt = now;
-        Serial.println("WiFi: attempting reconnection...");
+        Console.println("WiFi: attempting reconnection...");
         WiFi.reconnect();
     }
 

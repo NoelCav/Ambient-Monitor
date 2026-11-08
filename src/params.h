@@ -7,9 +7,9 @@ struct Params {
     String   wifiSsid;
     String   wifiPassword;
     String   deviceId;
-    bool     uploadEnabled;
     uint32_t sampleIntervalS;
-    uint16_t batchSize;
+    // Test mode: PMS stays powered and live [PMS]/[ENV] lines print every 5s.
+    bool     liveDebug;
 };
 
 // Global accessor for the loaded params.

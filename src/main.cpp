@@ -1,14 +1,16 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
+#include <WiFi.h>
 #include "PMS5003.h"
 #include "config.h"
 #include "params.h"
 #include "sensor_reading.h"
 #include "wifi_manager.h"
-#include "firestore_upload.h"
 #include "config_portal.h"
 #include "data_log.h"
+#include "console.h"
+#include "health.h"
 
 Adafruit_BME280 bme;
 PMS5003 pms;
@@ -18,8 +20,6 @@ bool pmsOn = false;
 unsigned long pmsOnSince = 0;     // millis() when the PMS was last woken
 PMS5003::Data lastPmsFrame = {};  // most recent full frame, for live debug
 bool bmeOk = false;
-unsigned samplesSinceFlush = 0;
-bool flushing = false;
 SensorReading latestReading = {};
 
 // Rolling 1-second sound buffer (samples every 1ms)
@@ -254,35 +254,35 @@ void samplePMS(SensorReading& r) {
 // --- Serial output ---
 
 void printReading(const SensorReading& r) {
-    Serial.println("--- Sample ---");
+    Console.println("--- Sample ---");
 
     if (r.bme_valid) {
-        Serial.println("-- Environment --");
-        Serial.printf("  Temp     = %.2f C      [%s]\n", r.temperature, tempLevel(r.temperature));
-        Serial.printf("  Humidity = %.2f %%     [%s]\n", r.humidity, humidityLevel(r.humidity));
-        Serial.printf("  Pressure = %.2f hPa   [%s]\n", r.pressure, pressureLevel(r.pressure));
+        Console.println("-- Environment --");
+        Console.printf("  Temp     = %.2f C      [%s]\n", r.temperature, tempLevel(r.temperature));
+        Console.printf("  Humidity = %.2f %%     [%s]\n", r.humidity, humidityLevel(r.humidity));
+        Console.printf("  Pressure = %.2f hPa   [%s]\n", r.pressure, pressureLevel(r.pressure));
     } else {
-        Serial.println("BME280: read failed");
+        Console.println("BME280: read failed");
     }
 
-    Serial.println("-- Sound (1s rolling) --");
-    Serial.printf("  Average=%4d  Peak=%4d  [%s]\n", r.sound_avg, r.sound_peak, soundLevel(r.sound_avg));
+    Console.println("-- Sound (1s rolling) --");
+    Console.printf("  Average=%4d  Peak=%4d  [%s]\n", r.sound_avg, r.sound_peak, soundLevel(r.sound_avg));
 
-    Serial.println("-- Light --");
-    Serial.printf("  ADC = %4d  [%s]\n", r.light, lightLevel(r.light));
+    Console.println("-- Light --");
+    Console.printf("  ADC = %4d  [%s]\n", r.light, lightLevel(r.light));
 
     if (r.pms_valid) {
-        Serial.println("-- Particulate Matter --");
-        Serial.printf("  PM1.0  = %3d ug/m3  [%s]\n", r.pm1_0, pm1Level(r.pm1_0));
-        Serial.printf("  PM2.5  = %3d ug/m3  [%s]\n", r.pm2_5, pm25Level(r.pm2_5));
-        Serial.printf("  PM10   = %3d ug/m3  [%s]\n", r.pm10, pm10Level(r.pm10));
+        Console.println("-- Particulate Matter --");
+        Console.printf("  PM1.0  = %3d ug/m3  [%s]\n", r.pm1_0, pm1Level(r.pm1_0));
+        Console.printf("  PM2.5  = %3d ug/m3  [%s]\n", r.pm2_5, pm25Level(r.pm2_5));
+        Console.printf("  PM10   = %3d ug/m3  [%s]\n", r.pm10, pm10Level(r.pm10));
     } else {
-        Serial.println("PMS: no data");
+        Console.println("PMS: no data");
     }
 
-    Serial.printf("-- Status: WiFi=%s  Queue=%u --\n",
+    Console.printf("-- Status: WiFi=%s  uptime=%lus  heap=%u --\n",
         wifiConnected() ? "connected" : "disconnected",
-        firestoreQueueCount());
+        millis() / 1000, (unsigned)ESP.getFreeHeap());
 }
 
 // --- Status JSON (for the live config-portal panel) ---
@@ -322,6 +322,8 @@ String statusJson() {
 
     j += ",\"sound\":{\"avg\":" + String(r.sound_avg);
     j += ",\"peak\":" + String(r.sound_peak);
+    j += ",\"p2p\":" + String(r.sound_p2p);
+    j += ",\"p2p_max\":" + String(r.sound_p2p_max);
     j += ",\"lvl\":\"" + jsonEsc(soundLevel(r.sound_avg)) + "\"}";
 
     j += ",\"light\":{\"adc\":" + String(r.light);
@@ -337,6 +339,12 @@ String statusJson() {
         j += ",\"pm10Lvl\":\"" + jsonEsc(pm10Level(r.pm10)) + "\"";
     }
     j += "}";
+
+    j += ",\"sys\":{\"uptime_s\":" + String(millis() / 1000);
+    j += ",\"reset\":\"" + jsonEsc(resetReasonStr()) + "\"";
+    j += ",\"heap\":" + String(ESP.getFreeHeap());
+    j += ",\"rssi\":" + String(WiFi.RSSI());
+    j += ",\"live_debug\":" + String(params().liveDebug ? "true" : "false") + "}";
 
     j += "}";
     return j;
@@ -370,7 +378,7 @@ void dumpBmeCalibration(uint8_t addr) {
     uint16_t t1 = c[0] | (c[1] << 8);
     int16_t  t2 = (int16_t)(c[2] | (c[3] << 8));
     int16_t  t3 = (int16_t)(c[4] | (c[5] << 8));
-    Serial.printf("BME280 @0x%02X: chip_id=0x%02X%s dig_T1=%u dig_T2=%d dig_T3=%d (i2c err %u/%u)\n",
+    Console.printf("BME280 @0x%02X: chip_id=0x%02X%s dig_T1=%u dig_T2=%d dig_T3=%d (i2c err %u/%u)\n",
         addr, id, id == 0x60 ? " (BME280)" : id == 0x58 ? " (BMP280!)" : " (unexpected)",
         t1, t2, t3, e1, e2);
 }
@@ -390,7 +398,7 @@ void bmeForcedTest(uint8_t addr) {
     delay(20);                                 // x1/x1/x1 conversion is <10 ms
     uint8_t r[8] = {0};
     uint8_t e3 = bmeReadRegs(addr, 0xF7, r, 8);
-    Serial.printf("BME forced test: write err %u/%u, ctrl_meas after write=%02X, "
+    Console.printf("BME forced test: write err %u/%u, ctrl_meas after write=%02X, "
                   "raw P=%02X%02X%02X T=%02X%02X%02X H=%02X%02X (read err %u)%s\n",
         e1, e2, ctrlNow, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], e3,
         (e1 || e2) ? "  <-- chip not responding at all (wiring/contact?)"
@@ -405,7 +413,7 @@ void bmeForcedTest(uint8_t addr) {
 void printBmeRaw(uint8_t addr) {
     uint8_t r[12] = {0};
     uint8_t err = bmeReadRegs(addr, 0xF3, r, 12);
-    Serial.printf("[BME raw] err=%u status=%02X ctrl_meas=%02X config=%02X "
+    Console.printf("[BME raw] err=%u status=%02X ctrl_meas=%02X config=%02X "
                   "P=%02X%02X%02X T=%02X%02X%02X H=%02X%02X\n",
         err, r[0], r[1], r[2], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]);
 }
@@ -413,18 +421,18 @@ void printBmeRaw(uint8_t addr) {
 // --- Startup self-test ---
 
 void runSelfTest() {
-    Serial.println("--- Device self-test ---");
+    Console.println("--- Device self-test ---");
 
     if (bmeOk && !bmeMeasure()) {
-        Serial.println("  BME280:         FOUND, but measurement failed");
+        Console.println("  BME280:         FOUND, but measurement failed");
     } else if (bmeOk) {
-        Serial.printf("  BME280:         OK (%.1f C, %.0f%%, %.0f hPa)\n",
+        Console.printf("  BME280:         OK (%.1f C, %.0f%%, %.0f hPa)\n",
             bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F);
     } else {
-        Serial.println("  BME280:         NOT FOUND");
+        Console.println("  BME280:         NOT FOUND");
     }
-    Serial.printf("  KY-037 sound:   %d\n", analogRead(PIN_KY037_A));
-    Serial.printf("  Photoresistor:  %d\n", analogRead(PIN_PHOTO));
+    Console.printf("  KY-037 sound:   %d\n", analogRead(PIN_KY037_A));
+    Console.printf("  Photoresistor:  %d\n", analogRead(PIN_PHOTO));
 
     pms.reset();
     pms.powerOn();
@@ -433,10 +441,10 @@ void runSelfTest() {
         pms.loop();
         delay(5);
     }
-    Serial.printf("  PMS5003:        %s\n",
+    Console.printf("  PMS5003:        %s\n",
         pms.getDebugStats().bytesReceived > 0 ? "OK" : "NO DATA");
 
-    Serial.println("------------------------");
+    Console.println("------------------------");
 }
 
 // --- Setup & Loop ---
@@ -444,7 +452,8 @@ void runSelfTest() {
 void setup() {
     Serial.begin(115200);
     delay(100);
-    Serial.println("Ambient Monitor - ESP32 firmware starting");
+    Console.println("Ambient Monitor - ESP32 firmware starting");
+    Console.printf("Reset reason: %s  (build %s %s)\n", resetReasonStr(), __DATE__, __TIME__);
 
     paramsLoad();
     dataLogSetup();
@@ -453,25 +462,25 @@ void setup() {
     Wire.setTimeOut(50);  // don't block boot if a line is stuck low (shorted bus)
 
     // TEMP I2C scan — remove once BME is found. Prints every responding address.
-    Serial.print("I2C scan:");
+    Console.print("I2C scan:");
     int found = 0;
     for (uint8_t a = 1; a < 127; a++) {
         Wire.beginTransmission(a);
         if (Wire.endTransmission() == 0) {
-            Serial.printf(" 0x%02X", a);
+            Console.printf(" 0x%02X", a);
             found++;
         }
     }
-    Serial.println(found ? "" : " (nothing on bus)");
+    Console.println(found ? "" : " (nothing on bus)");
 
     // Raw diagnostics first; bmeInit() then soft-resets and configures the chip.
     dumpBmeCalibration(0x76);
     bmeForcedTest(0x76);
     bmeOk = bmeInit();
     if (!bmeOk) {
-        Serial.println("WARNING: BME280 not found at 0x76 (will retry while sampling)");
+        Console.println("WARNING: BME280 not found at 0x76 (will retry while sampling)");
     } else {
-        Serial.printf("BME280 initialized at 0x%02X (forced mode, x1)\n", bmeAddr);
+        Console.printf("BME280 initialized at 0x%02X (forced mode, x1)\n", bmeAddr);
     }
 
     pinMode(PIN_KY037_A, INPUT);
@@ -488,7 +497,6 @@ void setup() {
     lastSample = millis() - (sampleIntervalMs() > PMS_WARMUP_MS ? sampleIntervalMs() - PMS_WARMUP_MS : 0);
 
     wifiSetup();
-    firestoreSetup();
     configPortalSetup();
 }
 
@@ -546,6 +554,7 @@ void loop() {
 
     wifiLoop();
     configPortalLoop();
+    consoleLoop();
 
     // Power on PMS PMS_WARMUP_MS before the next sample
     if (!pmsOn && timeSinceLastSample + PMS_WARMUP_MS >= sampleIntervalMs()) {
@@ -564,16 +573,16 @@ void loop() {
         }
     }
 
-#if PMS_DEBUG_LIVE
-    // Every 5s print live diagnostics: one PMS line and one environment line.
-    // t+ is seconds since the PMS woke, so settling time can be read directly.
+    // Test mode: every 5s print live diagnostics, one PMS line and one
+    // environment line. t+ is seconds since the PMS woke, so settling time can
+    // be read directly.
     static unsigned long lastPmsDebug = 0;
-    if (pmsOn && now - lastPmsDebug >= 5000) {
+    if (params().liveDebug && pmsOn && now - lastPmsDebug >= 5000) {
         lastPmsDebug = now;
         PMS5003::DebugStats s = pms.getDebugStats();
         const PMS5003::Data& f = lastPmsFrame;
         if (s.framesDecoded > 0 || f.frameIntervalMs > 0) {
-            Serial.printf("[PMS t+%lus] atm=%u/%u/%u cf1=%u/%u/%u | n>0.3=%u >0.5=%u >1=%u >2.5=%u >5=%u >10=%u"
+            Console.printf("[PMS t+%lus] atm=%u/%u/%u cf1=%u/%u/%u | n>0.3=%u >0.5=%u >1=%u >2.5=%u >5=%u >10=%u"
                           " | dt=%lums frames=%lu bad=%lu\n",
                 (now - pmsOnSince) / 1000,
                 f.pm1_0, f.pm2_5, f.pm10, f.pm1_0_cf1, f.pm2_5_cf1, f.pm10_cf1,
@@ -581,7 +590,7 @@ void loop() {
                 (unsigned long)f.frameIntervalMs, (unsigned long)s.framesDecoded,
                 (unsigned long)s.checksumFailures);
         } else {
-            Serial.printf("[PMS t+%lus] no frames (bytes=%lu)\n",
+            Console.printf("[PMS t+%lus] no frames (bytes=%lu)\n",
                 (now - pmsOnSince) / 1000, (unsigned long)s.bytesReceived);
         }
 
@@ -594,16 +603,15 @@ void loop() {
         soundP2pMaxDebug = 0;
 
         if (bmeOk && bmeMeasure()) {
-            Serial.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | %s\n",
+            Console.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | %s\n",
                 bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F, other);
         } else {
             // Raw registers only on failure: shows whether the chip is asleep,
             // stuck at reset values, or gone from the bus.
             if (bmeOk) printBmeRaw(bmeAddr);
-            Serial.printf("[ENV] BME %s | %s\n", bmeOk ? "measurement failed" : "not found", other);
+            Console.printf("[ENV] BME %s | %s\n", bmeOk ? "measurement failed" : "not found", other);
         }
     }
-#endif
 
     // Sample when interval is reached
     if (timeSinceLastSample >= sampleIntervalMs()) {
@@ -617,26 +625,13 @@ void loop() {
         printReading(latestReading);
         dataLogAppend(latestReading);
 
-#if !PMS_DEBUG_LIVE
-        pms.powerOff();
-        pmsOn = false;
-#endif
-
-        if (params().uploadEnabled) {
-            queueReading(latestReading);
-            if (++samplesSinceFlush >= params().batchSize) {
-                flushing = true;
-                samplesSinceFlush = 0;
-            }
+        // Duty-cycle the PMS between samples, except in test mode.
+        if (!params().liveDebug) {
+            pms.powerOff();
+            pmsOn = false;
         }
 
         lastSample = now;
-    }
-
-    // Drain the queue non-blockingly while a flush is open; retries failed uploads.
-    if (flushing) {
-        firestoreLoop();
-        if (firestoreQueueCount() == 0) flushing = false;
     }
 
     pms.loop();

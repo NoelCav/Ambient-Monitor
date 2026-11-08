@@ -1,5 +1,6 @@
 #include "params.h"
 #include "config.h"
+#include "console.h"
 #include <Preferences.h>
 
 static Params g_params;
@@ -12,8 +13,7 @@ static void validate(Params& p) {
     if (p.wifiSsid.length() == 0)     p.wifiSsid = WIFI_SSID;
     if (p.deviceId.length() == 0)     p.deviceId = DEVICE_ID;
     if (p.sampleIntervalS < 1)        p.sampleIntervalS = DEFAULT_SAMPLE_INTERVAL_S;
-    if (p.batchSize < 1)              p.batchSize = 1;
-    if (p.batchSize > QUEUE_SIZE)     p.batchSize = QUEUE_SIZE;
+    if (p.sampleIntervalS > 86400)    p.sampleIntervalS = 86400;  // keeps ms math in range
 }
 
 Params& params() { return g_params; }
@@ -25,17 +25,15 @@ void paramsLoad() {
     g_params.wifiSsid        = prefs.getString("wifi_ssid", WIFI_SSID);
     g_params.wifiPassword    = prefs.getString("wifi_pass", WIFI_PASSWORD);
     g_params.deviceId        = prefs.getString("device_id", DEVICE_ID);
-    g_params.uploadEnabled   = prefs.getBool("upload_en", DEFAULT_UPLOAD_ENABLED);
     g_params.sampleIntervalS = prefs.getUInt("sample_s", DEFAULT_SAMPLE_INTERVAL_S);
-    g_params.batchSize       = prefs.getUShort("batch", DEFAULT_BATCH_SIZE);
+    g_params.liveDebug       = prefs.getBool("live_dbg", DEFAULT_LIVE_DEBUG);
     prefs.end();
 
     validate(g_params);
 
-    Serial.printf("Params: device=%s ssid=%s upload=%s sample=%us batch=%u\n",
+    Console.printf("Params: device=%s ssid=%s sample=%us live_debug=%s\n",
         g_params.deviceId.c_str(), g_params.wifiSsid.c_str(),
-        g_params.uploadEnabled ? "on" : "off",
-        g_params.sampleIntervalS, g_params.batchSize);
+        g_params.sampleIntervalS, g_params.liveDebug ? "on" : "off");
 }
 
 void paramsSave(const Params& in) {
@@ -46,11 +44,13 @@ void paramsSave(const Params& in) {
     prefs.putString("wifi_ssid", p.wifiSsid);
     prefs.putString("wifi_pass", p.wifiPassword);
     prefs.putString("device_id", p.deviceId);
-    prefs.putBool("upload_en", p.uploadEnabled);
     prefs.putUInt("sample_s", p.sampleIntervalS);
-    prefs.putUShort("batch", p.batchSize);
+    prefs.putBool("live_dbg", p.liveDebug);
+    // Keys from the removed Firestore upload path.
+    prefs.remove("upload_en");
+    prefs.remove("batch");
     prefs.end();
 
     g_params = p;
-    Serial.println("Params: saved to NVS");
+    Console.println("Params: saved to NVS");
 }

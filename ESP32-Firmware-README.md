@@ -7,7 +7,7 @@ Features implemented:
 - Reads two analog inputs: KY-037 sound analog output and a photoresistor voltage divider.
 - Parses PMS5003 serial frames (via Serial1) and logs PM1.0/PM2.5/PM10 values.
 - Periodic sampling controlled by the `sample_interval_s` runtime param (default 600s).
-- Serial output plus optional Firestore upload, with a web config portal for runtime params.
+- Serial + network console output, a persistent on-device CSV log, OTA updates, and a web config portal for runtime params.
 
 Wiring (matching repository README):
 - BME280 SDA -> GPIO 1, SCL -> GPIO 2 (I2C)
@@ -27,5 +27,5 @@ Build and flash with PlatformIO:
    pio device monitor -e esp32s3
 
 Notes and next steps:
-- Runtime settings (WiFi creds, device ID, sample interval, batch size, upload on/off) are edited via the web config portal — browse to the device IP, or to the `AmbientMonitor-setup` AP if it can't join WiFi. Changes apply on reboot.
+- Runtime settings (WiFi creds, device ID, sample interval, test mode) are edited via the web config portal at http://esp32-ambient-01.local (or the device IP), or to the `AmbientMonitor-setup` AP if it can't join WiFi. Changes apply on reboot.
 - For more robust parsing and sleep/power modes, consider using driver libraries and hardware flow control for PMS5003.

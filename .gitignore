@@ -78,3 +78,5 @@ src/secrets.h
 
 # Visual Studio Code
 .vscode
+# Local PlatformIO overrides (OTA password)
+secrets.ini

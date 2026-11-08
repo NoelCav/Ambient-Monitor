@@ -1,6 +1,8 @@
 #include "data_log.h"
+#include "console.h"
 #include "config.h"
 #include "params.h"
+#include "health.h"
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <time.h>
@@ -9,7 +11,7 @@ const char* const DATA_LOG_PATH = "/log.csv";
 const char* const DATA_LOG_OLD_PATH = "/log.old.csv";
 
 static const char* const HEADER =
-    "epoch,uptime_s,boot,device_id,"
+    "epoch,uptime_s,boot,reset,device_id,"
     "temp_c,humidity_pct,pressure_hpa,"
     "pm1_0,pm2_5,pm10,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
     "sound_avg,sound_peak,sound_p2p,sound_p2p_max,light\n";
@@ -30,7 +32,7 @@ static void rotate(const char* why) {
     LittleFS.remove(DATA_LOG_OLD_PATH);
     LittleFS.rename(DATA_LOG_PATH, DATA_LOG_OLD_PATH);
     writeHeaderIfEmpty();
-    Serial.printf("DataLog: rotated log.csv -> log.old.csv (%s)\n", why);
+    Console.printf("DataLog: rotated log.csv -> log.old.csv (%s)\n", why);
 }
 
 static void rotateIfNeeded() {
@@ -60,7 +62,7 @@ void dataLogSetup() {
     // formatOnFail=true only formats when mounting fails (first boot ever).
     mounted = LittleFS.begin(true, "/littlefs", 10, "spiffs");
     if (!mounted) {
-        Serial.println("DataLog: LittleFS mount failed, logging disabled");
+        Console.println("DataLog: LittleFS mount failed, logging disabled");
         return;
     }
 
@@ -74,7 +76,7 @@ void dataLogSetup() {
 
     rotateIfHeaderChanged();
     writeHeaderIfEmpty();
-    Serial.printf("DataLog: mounted, boot #%u, %u bytes used of %u\n",
+    Console.printf("DataLog: mounted, boot #%u, %u bytes used of %u\n",
         bootCount, (unsigned)dataLogSize(), (unsigned)LittleFS.totalBytes());
 }
 
@@ -98,7 +100,7 @@ void dataLogClear() {
     LittleFS.remove(DATA_LOG_PATH);
     LittleFS.remove(DATA_LOG_OLD_PATH);
     writeHeaderIfEmpty();
-    Serial.println("DataLog: cleared");
+    Console.println("DataLog: cleared");
 }
 
 void dataLogAppend(const SensorReading& r) {
@@ -122,14 +124,14 @@ void dataLogAppend(const SensorReading& r) {
     }
 
     char line[256];
-    int n = snprintf(line, sizeof(line), "%s,%lu,%u,%s,%s,%s,%d,%d,%d,%d,%d\n",
+    int n = snprintf(line, sizeof(line), "%s,%lu,%u,%s,%s,%s,%s,%d,%d,%d,%d,%d\n",
         synced ? String((long)now).c_str() : "",
-        r.timestamp_ms / 1000, bootCount, params().deviceId.c_str(),
+        r.timestamp_ms / 1000, bootCount, resetReasonStr(), params().deviceId.c_str(),
         env, pm, r.sound_avg, r.sound_peak, r.sound_p2p, r.sound_p2p_max, r.light);
 
     File f = LittleFS.open(DATA_LOG_PATH, FILE_APPEND);
     if (!f) {
-        Serial.println("DataLog: open for append failed");
+        Console.println("DataLog: open for append failed");
         return;
     }
     f.write((const uint8_t*)line, n < (int)sizeof(line) ? n : sizeof(line) - 1);

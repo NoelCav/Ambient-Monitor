@@ -11,25 +11,12 @@
 #ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD ""
 #endif
-#ifndef FIREBASE_DEVICE_EMAIL
-#define FIREBASE_DEVICE_EMAIL ""
-#endif
-#ifndef FIREBASE_DEVICE_PASSWORD
-#define FIREBASE_DEVICE_PASSWORD ""
-#endif
 
-// --- Firebase (public values, safe to commit) ---
-#ifndef FIREBASE_API_KEY
-#define FIREBASE_API_KEY "AIzaSyCh8eG5kJ47smEPUcvR7SrgJG6mdAZGx4E"
-#endif
-#ifndef FIREBASE_PROJECT_ID
-#define FIREBASE_PROJECT_ID "ambient-monitor-f9e46"
-#endif
 #ifndef DEVICE_ID
 #define DEVICE_ID "esp32-ambient-01"
 #endif
 
-// --- Pins (defaults set in platformio.ini) ---
+// --- Pins ---
 #ifndef PIN_BME_SDA
 #define PIN_BME_SDA 1
 #endif
@@ -63,31 +50,15 @@
 #define DEFAULT_SAMPLE_INTERVAL_S 600  // 10 minutes
 #endif
 
-#ifndef DEFAULT_BATCH_SIZE
-#define DEFAULT_BATCH_SIZE 1  // samples collected per Firestore flush
-#endif
-
-#ifndef DEFAULT_UPLOAD_ENABLED
-#define DEFAULT_UPLOAD_ENABLED false
+// Test mode default: PMS stays powered and [PMS]/[ENV] diagnostics print every
+// 5s. Toggle at runtime from the portal ("live_dbg"); this only seeds NVS.
+#ifndef DEFAULT_LIVE_DEBUG
+#define DEFAULT_LIVE_DEBUG true
 #endif
 
 // --- Timing (hardware constants) ---
 #ifndef PMS_WARMUP_MS
 #define PMS_WARMUP_MS 90000  // 90s warmup before sampling (cold-start stabilization)
-#endif
-
-// Debug: set to 1 to keep the PMS powered continuously and print the average of
-// the last 5 frames every 5s (for live smoke/dust testing). Leave 0 in normal
-// use — compiles out entirely when off.
-#ifndef PMS_DEBUG_LIVE
-#define PMS_DEBUG_LIVE 1
-#endif
-
-// --- Offline ring buffer ---
-// 1008 slots = 7 days of offline storage at the 10-min default sample interval
-// (1008 x ~40 bytes ~= 40 KB RAM). Coverage scales with sample interval.
-#ifndef QUEUE_SIZE
-#define QUEUE_SIZE 1008
 #endif
 
 // --- Persistent data log (LittleFS, survives firmware uploads) ---
@@ -97,6 +68,14 @@
 #define LOG_MAX_BYTES (512 * 1024)
 #endif
 
+// --- Network console (recent serial output, served over WiFi) ---
+#ifndef CONSOLE_BUF_BYTES
+#define CONSOLE_BUF_BYTES (16 * 1024)  // backlog kept in RAM for /console and telnet
+#endif
+#ifndef CONSOLE_TCP_PORT
+#define CONSOLE_TCP_PORT 23
+#endif
+
 // --- AP fallback (used when the device can't join the configured WiFi) ---
 #ifndef AP_SSID
 #define AP_SSID "AmbientMonitor-setup"
@@ -104,4 +83,11 @@
 // AP_PASSWORD comes from secrets.h so the published repo doesn't reveal it
 #ifndef AP_PASSWORD
 #error "Define AP_PASSWORD (min 8 chars) in src/secrets.h"
+#endif
+
+// --- OTA firmware updates (ArduinoOTA on port 3232) ---
+// Defaults to the setup-AP password: anyone holding it can already reconfigure
+// the device. Override in secrets.h to use a separate one.
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD AP_PASSWORD
 #endif
