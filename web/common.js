@@ -112,40 +112,83 @@ function parseCsv(txt){var L=txt.trim().split('\n'),h=L.shift().trim().split(','
 function nearest(rows,te,maxGap){var lo=0,hi=rows.length-1;if(hi<0)return null;
  while(lo<hi){var m=(lo+hi)>>1;if(rows[m].epoch<te)lo=m+1;else hi=m}
  if(lo>0&&te-rows[lo-1].epoch<rows[lo].epoch-te)lo--;return Math.abs(rows[lo].epoch-te)<=maxGap?rows[lo]:null}
+// Time markers: a "round" step for the visible span (about 4-8 lines),
+// aligned to local clock boundaries (whole hours, midnight).
+var STEPS=[900,1800,3600,7200,10800,21600,43200,86400,172800,604800,1209600,2592000];
+function ticks(v0,v1){var span=v1-v0,step=STEPS[STEPS.length-1];
+ for(var i=0;i<STEPS.length;i++)if(span/STEPS[i]<=8){step=STEPS[i];break}
+ var d=new Date(v0*1000),out=[];
+ if(step<3600){var mi=step/60;d.setMinutes(Math.floor(d.getMinutes()/mi)*mi,0,0)}       // :00 :15 :30 ...
+ else if(step<86400){var hr=step/3600;d.setHours(Math.floor(d.getHours()/hr)*hr,0,0,0)}  // 0:00 6:00 12:00 ...
+ else d.setHours(0,0,0,0);                                                                // midnight
+ for(var t=d.getTime()/1000;t<=v1;){if(t>=v0)out.push(t);
+  if(step<86400)t+=step;else{d=new Date(t*1000);d.setDate(d.getDate()+step/86400);t=d.getTime()/1000}}
+ return {step:step,at:out}}
+function tickLabel(t,step){var d=new Date(t*1000),day=d.getHours()==0&&d.getMinutes()==0;
+ return step>=86400||day?d.toLocaleDateString([],{month:'short',day:'numeric'}):d.toLocaleTimeString([],{hour:'numeric',minute:d.getMinutes()?'2-digit':undefined})}
+
+// Charts with time markers and zoom: drag across a chart to zoom every chart
+// to that stretch; "Zoom out" doubles the window, "Reset" shows everything.
+// The y axes rescale to what is visible. A redraw with new data (the
+// dashboard's refresh) keeps the zoom.
 function charts(el,mons,note){
  mons=mons.filter(function(m){return m.rows.length});
  var all=[].concat.apply([],mons.map(function(m){return m.rows}));
- if(all.length<2){el.innerHTML='<div class="muted">'+(all.length?'Only one reading so far; graphs need two.':'No readings in this range.')+'</div>';return}
- var t0=Math.min.apply(null,all.map(function(r){return r.epoch})),t1=Math.max.apply(null,all.map(function(r){return r.epoch})),span=Math.max(1,t1-t0);
+ if(all.length<2){el._ch=null;el.innerHTML='<div class="muted">'+(all.length?'Only one reading so far; graphs need two.':'No readings in this range.')+'</div>';return}
+ var t0=Math.min.apply(null,all.map(function(r){return r.epoch})),t1=Math.max.apply(null,all.map(function(r){return r.epoch}));
  // A gap longer than 3x the usual spacing (or 2 min) breaks the line: the monitor was off.
  mons.forEach(function(m){var g=m.rows.slice(1).map(function(r,i){return r.epoch-m.rows[i].epoch}).sort(function(a,b){return a-b});
   m.gap=Math.max((g[g.length>>1]||60)*3,120)});
+ var old=el._ch,v0=t0,v1=t1;
+ if(old&&old.zoomed){v0=Math.max(t0,old.v0);v1=Math.min(t1,old.v1);if(v1-v0<60){v0=t0;v1=t1}}
+ el._ch={mons:mons,note:note,t0:t0,t1:t1,v0:v0,v1:v1,zoomed:v0>t0||v1<t1};
+ drawCharts(el)}
+function zoomTo(el,v0,v1){var c=el._ch;v0=Math.max(c.t0,v0);v1=Math.min(c.t1,v1);
+ if(v1-v0<60)return;c.v0=v0;c.v1=v1;c.zoomed=v0>c.t0||v1<c.t1;drawCharts(el)}
+function zoomOut(el){var c=el._ch,mid=(c.v0+c.v1)/2,w=c.v1-c.v0;zoomTo(el,mid-w,mid+w)}
+function drawCharts(el){var c=el._ch,mons=c.mons,v0=c.v0,v1=c.v1,span=Math.max(1,v1-v0);
+ var X=function(t){return (t-v0)/span*1000},tk=ticks(v0,v1);
  var multi=mons.length>1,col=function(mi,li){return COL[multi?mi:li]};
- var h=note?'<div class="muted">'+note+'</div>':'';
+ var grid='',axis='';tk.at.forEach(function(t){var x=X(t);
+  grid+='<line class="tk" x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="0" y2="100" vector-effect="non-scaling-stroke"/>';
+  axis+='<span style="left:'+(x/10).toFixed(2)+'%">'+tickLabel(t,tk.step)+'</span>'});
+ var h='<div class="chz"><span class="muted">'+(c.note?c.note+' ':'')+tfmt(v0)+' – '+tfmt(v1)+(c.zoomed?'':' · drag across a chart to zoom')+'</span>'+
+  (c.zoomed?'<span><button type="button">Zoom out</button><button type="button">Reset</button></span>':'')+'</div>';
  if(multi)h+='<div class="chr" style="justify-content:flex-start;gap:14px">'+mons.map(function(m,mi){return '<span style="color:'+COL[mi]+'">&#9644; '+esc(m.name)+'</span>'}).join('')+'</div>';
  SER.forEach(function(s,si){var ys=[];
-  mons.forEach(function(m){s.l.forEach(function(f){m.rows.forEach(function(r){var v=f(r,m);if(isFinite(v))ys.push(v)})})});
+  mons.forEach(function(m){s.l.forEach(function(f){m.rows.forEach(function(r){if(r.epoch<v0||r.epoch>v1)return;var v=f(r,m);if(isFinite(v))ys.push(v)})})});
   if(!ys.length)return;
   var lo=Math.min.apply(null,ys),hi=Math.max.apply(null,ys);if(hi-lo<1e-6){hi+=1;lo-=1}var pad=(hi-lo)*.08;lo-=pad;hi+=pad;
+  // Points just outside the window keep lines running to the edges; the SVG clips them.
   var paths='';mons.forEach(function(m,mi){s.l.forEach(function(f,li){var d='',prev=null;
    m.rows.forEach(function(r){var v=f(r,m);if(!isFinite(v)){prev=null;return}
-    var x=(r.epoch-t0)/span*1000,y=100-(v-lo)/(hi-lo)*100;d+=(prev===null||r.epoch-prev>m.gap?'M':'L')+x.toFixed(1)+' '+y.toFixed(1);prev=r.epoch});
+    d+=(prev===null||r.epoch-prev>m.gap?'M':'L')+X(r.epoch).toFixed(1)+' '+(100-(v-lo)/(hi-lo)*100).toFixed(1);prev=r.epoch});
    paths+='<path d="'+d+'" fill="none" stroke="'+col(mi,li)+'" stroke-width="1.6"'+((multi||s.t=='PM2.5')&&li==1?' stroke-dasharray="5 4"':'')+' vector-effect="non-scaling-stroke"/>'})});
   var key=s.n?s.n.map(function(n,i){return '<span'+(multi?'':' style="color:'+COL[i]+'"')+'>'+(multi&&i?'- - ':'&#9644; ')+n+'</span>'}).join(' '):'';
   h+='<div class="ch"><div class="chh"><b>'+s.t+'</b><span data-si="'+si+'"></span></div>'+
    '<div class="chr"><span>'+key+'</span><span>'+(+(hi-pad)).toFixed(s.d)+' max · '+(+(lo+pad)).toFixed(s.d)+' min</span></div>'+
-   '<svg viewBox="0 0 1000 100" preserveAspectRatio="none">'+paths+
-   '<line class="hl" x1="-10" x2="-10" y1="0" y2="100" vector-effect="non-scaling-stroke"/></svg></div>'});
- h+='<div class="chx"><span>'+tfmt(t0)+'</span><span>'+tfmt(t1)+'</span></div>';
+   '<svg viewBox="0 0 1000 100" preserveAspectRatio="none">'+grid+paths+
+   '<rect class="zs" x="0" y="0" width="0" height="100"/>'+
+   '<line class="hl" x1="-10" x2="-10" y1="0" y2="100" vector-effect="non-scaling-stroke"/></svg>'+
+   '<div class="ax">'+axis+'</div></div>'});
  el.innerHTML=h;
+ var btns=el.querySelectorAll('.chz button');
+ if(btns.length){btns[0].onclick=function(){zoomOut(el)};btns[1].onclick=function(){zoomTo(el,c.t0,c.t1)}}
  // Hover / touch: a marker line and every monitor's values at that time in each chart header.
- function hover(te){var x=((te-t0)/span*1000).toFixed(1);
+ function hover(te){var x=X(te).toFixed(1);
   [].forEach.call(el.querySelectorAll('.hl'),function(l){l.setAttribute('x1',x);l.setAttribute('x2',x)});
   [].forEach.call(el.querySelectorAll('.chh span'),function(e){var s=SER[e.dataset.si];
    e.textContent=mons.map(function(m){var r=nearest(m.rows,te,m.gap);
     var v=r?s.l.map(function(f){var y=f(r,m);return isFinite(y)?y.toFixed(s.d):'–'}).join(' / '):'–';
     return (multi?m.name+' ':'')+v}).join(' · ')+(s.u?' '+s.u:'')+' · '+tfmt(te)})}
- hover(t1);
- [].forEach.call(el.querySelectorAll('svg'),function(sv){
-  sv.onpointermove=function(e){var b=sv.getBoundingClientRect();hover(t0+(e.clientX-b.left)/b.width*span)};
-  sv.onpointerleave=function(){hover(t1)}})}
+ hover(v1);
+ // Drag to zoom: a sideways drag selects a time range (vertical swipes still scroll the page).
+ [].forEach.call(el.querySelectorAll('svg'),function(sv){var start=null,zs=sv.querySelector('.zs');
+  var at=function(e){var b=sv.getBoundingClientRect();return Math.min(1,Math.max(0,(e.clientX-b.left)/b.width))};
+  sv.onpointerdown=function(e){start=at(e);sv.setPointerCapture(e.pointerId)};
+  sv.onpointermove=function(e){var f=at(e);hover(v0+f*span);
+   if(start!==null){zs.setAttribute('x',(Math.min(start,f)*1000).toFixed(1));zs.setAttribute('width',(Math.abs(f-start)*1000).toFixed(1))}};
+  sv.onpointerup=function(e){var f=at(e),s0=start;start=null;zs.setAttribute('width',0);
+   if(s0!==null&&Math.abs(f-s0)>0.02)zoomTo(el,v0+Math.min(s0,f)*span,v0+Math.max(s0,f)*span)};
+  sv.onpointercancel=function(){start=null;zs.setAttribute('width',0)};
+  sv.onpointerleave=function(){if(start===null)hover(v1)}})}
