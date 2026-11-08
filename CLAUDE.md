@@ -29,7 +29,7 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 - Edit by browsing to `http://<device_id>.local` (mDNS, advertised once on WiFi) or the device IP (printed at boot as a fallback). If WiFi can't be joined, the device hosts a SoftAP `AmbientMonitor-setup` (`AP_SSID` in `config.h`, `AP_PASSWORD` in `secrets.h`) serving the same form.
 - The portal root also shows a live, auto-refreshing reading panel (env/sound/light/PM with levels), backed by `GET /status.json`.
 - Params: `device_id`, `wifi_ssid`/`wifi_password`, `upload_enabled`, `sample_interval_s`, `batch_size`. Defaults come from `DEFAULT_*` in `config.h` and `WIFI_SSID`/`WIFI_PASSWORD` in `secrets.h`.
-- `upload_enabled=false` → serial-only mode: WiFi/portal and the offline buffer stay active, but nothing is sent to Firestore.
+- `upload_enabled=false` → serial-only mode: WiFi/portal stay active, but readings are neither queued nor sent to Firestore.
 
 ## Data flow
 1. Sensors sampled every `sample_interval_s` (runtime param, default 10 min)
@@ -55,7 +55,25 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 
 ## PMS5003 power management
 - Duty-cycled: powers off between samples, powers on `PMS_WARMUP_MS` (90s) before each sample so the fan/laser stabilize before sampling
-- `PMS_DEBUG_LIVE` (`config.h`): keeps the sensor powered continuously and prints the average of the last 5 frames every 5s for live smoke/dust testing
+- `PMS_DEBUG_LIVE` (`config.h`): keeps the sensor powered continuously and prints two lines every 5 s. `[PMS t+Ns]` gives seconds since wake, atmospheric and CF=1 PM, particle counts (Data7–12), ms between frames and frames/checksum failures in the window. `[ENV]` gives live BME temp/RH/pressure, sound avg and peak-to-peak, and light. **Currently committed as `1`**, so duty-cycling is disabled.
+- At boot, `dumpBmeCalibration()` prints the BME chip ID and the dig_T1–T3 calibration words, to diagnose corrupted I2C reads.
+- On this board (CH343 USB-serial, COM3 on the user's desktop), opening the serial port can reset the ESP32.
+- Datasheet facts (Plantower PMS5003 manual v2.3): VCC 4.5–5.5 V (fan needs 5 V), ~100 mA active; UART/SET/RESET are 3.3 V TTL; SET high = run, low = sleep (internal pull-up); stable data needs **≥30 s after wake**; active-mode frames every 2.3 s (stable) or 200–800 ms (fast); total response time 10 s; MTTF 3 years. Frame = 32 bytes, Data1–3 = CF=1, Data4–6 = atmospheric (bytes 10–15, what we use). Near-zero PM in clean indoor air is normal.
+- The parser in the first commit (834ae40) never decoded a frame (bad checksum range); fixed in c22e528. Readings before June 2026 saying "PMS: no data" were a software bug, not dead sensors.
+
+## Audit notes (2026-11-04) — open issues, not yet fixed
+- **PMS readings (2026-11-08, PMS powered at ~4.5 V):** clean frames (`bad=0`), PM2.5 dropped from ~190 to ~57 µg/m³ over an hour on the bedroom floor, which has heavy dust. Counts >5 µm and >10 µm stay 0, and PM10 ≈ PM2.5. The PMS5003 is weak at coarse (>~5 µm) particles, which are what you see in sunbeams. The >0.3 µm count is nearly equal to the >0.5 µm count (often ~3× in published data), and frames arrive every ~1048 ms instead of the datasheet's 2.3 s / 200–800 ms. Compare all 3 units on the same firmware.
+- **Main symptom:** even after the c22e528 parser fix, the PMS reads 0 in visibly heavy dust (sweeping a garage) unless it's held next to the broom, and only improves after running for minutes. This happens on all 3 units, so the cause is probably shared (airflow, mounting, power under load or firmware) rather than three bad sensors. The fan is near-silent and only lightly moves paper at the inlet and outlet. The sensor sits in the open on its 6-inch cable, so mounting is ruled out. Next tests: an independent 5 V supply (shared GND) with the voltage measured at the sensor connector while it runs, plus a diagnostic build that logs the particle counts (Data7–12) and the time between frames.
+- **Unpushed work:** the user's old laptop may hold unpushed commits from the last round of testing. Pull those before changing code.
+- **Hardware state (from the user):** the board's `IN-OUT` 5 V pad is bridged and the 5 V output was checked with a meter. The KY-037 AO goes through a voltage divider that isn't in README.md. The BME is a genuine BME280. Swapping PMS RX/TX in the README was a port test and isn't the real wiring. Nothing is uploading and the cloud side isn't deployed.
+- **Build:** `src/secrets.h` lives on the user's other computer; `config.h` `#error`s without `AP_PASSWORD`.
+- **Timestamp bug:** `sendReading()` stamps `timestamp` with the *upload* time, not the sample time. Queued/batched/offline readings all get the flush time. `SensorReading` only stores `millis()`.
+- **Sound:** KY-037 AO is a DC bias plus the audio signal, so `sound_avg` is mostly the bias, not loudness. Use peak-to-peak (max − min) over the window.
+- **BME280 (2026-11-08, diagnosed):** the board in use (GY-BME/PMP280, suspected solder damage) **drops off I2C as soon as it starts a conversion**. `bmeForcedTest()` shows the ctrl_meas write landing (`25`), then the next read fails with err 4 and the chip comes back reset. ctrl_meas reads `00` (sleep) and the raw data stays at the reset values 0x800000/0x800000/0x8000. The installed Adafruit lib has no reset-value check, so it computes a constant fake **23.52 °C / 82.4 % / 699 hPa** from those registers. Every BME reading from this board is invalid. Likely cause is power or contact at the sensor (VCC/GND, header pins) or a damaged die. Swap the board or fix the contacts before trusting any temperature. Code should also reject raw 0x800000 as invalid.
+- **BME280 (earlier):** temperature reads about **100 °C too high**. That is far beyond self-heating (about 1 °C) and points to a hardware or communication fault: bad calibration data read at `begin()`, corrupted I2C reads, or a damaged sensor. Test with the stock Adafruit `bme280test` example and dump the chip ID and calibration registers. Separately, forced mode with x1 oversampling avoids self-heating. BME #1 was hand-soldered (suspected heat damage). BME #2 is press-fit with no solder, which reads better but is still off. Press-fit header contacts are a prime suspect for corrupted I2C reads. The BME280 is factory-calibrated, so the only user calibration is an optional fixed temperature offset against a reference thermometer.
+- **Planned direction:** restructure the firmware around FreeRTOS tasks and queues. The user wants to learn RTOS, so build it up incrementally.
+- **README wiring** for the PMS RX/TX is a leftover test swap. Firmware uses GPIO17 as ESP **RX**, so PMS **TX** goes to GPIO17.
+- **Cloud:** rollup drops `device_id` (mixes devices into one aggregate), `merge:true` re-runs overwrite earlier window averages, and the dashboard doesn't filter by `device_id`. Most Firebase setup boxes in `cloud/README.md` are unchecked, so the cloud state is unverified.
 
 ## Conventions
 - Non-blocking patterns throughout — no `delay()` in loop, only `yield()`

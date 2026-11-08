@@ -37,6 +37,7 @@ void PMS5003::reset()
 {
     _buf_pos = 0;
     _has_data = false;
+    _lastFrameMs = 0;
 }
 void PMS5003::loop()
 {
@@ -65,7 +66,9 @@ void PMS5003::loop()
 
         // Total frame: 2 (header) + 2 (len field) + len (payload + checksum)
         int frameSize = 2 + 2 + len;
-        if (frameSize > BUF_SIZE) {
+        // Active-mode frames are always len=28 (13 data words + checksum);
+        // anything shorter can't hold the fields read below.
+        if (len < 28 || frameSize > BUF_SIZE) {
             parsePos++;
             _debug.headerSkips++;
             continue;
@@ -86,14 +89,27 @@ void PMS5003::loop()
             continue;
         }
 
-        // PM values are at bytes 10-15 from frame start (atmospheric units)
-        int idx = parsePos + 10;
-        uint16_t pm1_0 = (_buf[idx]     << 8) | _buf[idx + 1];
-        uint16_t pm2_5 = (_buf[idx + 2] << 8) | _buf[idx + 3];
-        uint16_t pm10  = (_buf[idx + 4] << 8) | _buf[idx + 5];
-        _latest.pm1_0 = pm1_0;
-        _latest.pm2_5 = pm2_5;
-        _latest.pm10  = pm10;
+        // Data words start at byte 4: Data1-3 CF=1, Data4-6 atmospheric,
+        // Data7-12 particle counts. Each word is big-endian.
+        const uint8_t* f = &_buf[parsePos];
+        // (Not named "word": Arduino.h #defines word(...) as makeWord.)
+        auto dataWord = [f](int n) { return (uint16_t)((f[2 + 2 * n] << 8) | f[3 + 2 * n]); };
+        _latest.pm1_0_cf1 = dataWord(1);
+        _latest.pm2_5_cf1 = dataWord(2);
+        _latest.pm10_cf1  = dataWord(3);
+        _latest.pm1_0     = dataWord(4);
+        _latest.pm2_5     = dataWord(5);
+        _latest.pm10      = dataWord(6);
+        _latest.cnt_0_3   = dataWord(7);
+        _latest.cnt_0_5   = dataWord(8);
+        _latest.cnt_1_0   = dataWord(9);
+        _latest.cnt_2_5   = dataWord(10);
+        _latest.cnt_5_0   = dataWord(11);
+        _latest.cnt_10    = dataWord(12);
+
+        unsigned long nowMs = millis();
+        _latest.frameIntervalMs = _lastFrameMs ? nowMs - _lastFrameMs : 0;
+        _lastFrameMs = nowMs;
         _has_data = true;
         _debug.framesDecoded++;
         parsePos += frameSize;

@@ -14,6 +14,8 @@ PMS5003 pms;
 
 unsigned long lastSample = 0;
 bool pmsOn = false;
+unsigned long pmsOnSince = 0;     // millis() when the PMS was last woken
+PMS5003::Data lastPmsFrame = {};  // most recent full frame, for live debug
 bool bmeOk = false;
 unsigned samplesSinceFlush = 0;
 bool flushing = false;
@@ -175,6 +177,18 @@ void sampleSound(SensorReading& r) {
     }
 }
 
+// Max - min over the rolling sound buffer. The KY-037 AO is a DC bias plus the
+// audio signal, so the swing tracks loudness better than the average does.
+int soundPeakToPeak() {
+    if (soundBufCount == 0) return 0;
+    int lo = soundBuf[0], hi = soundBuf[0];
+    for (unsigned i = 1; i < soundBufCount; ++i) {
+        if (soundBuf[i] < lo) lo = soundBuf[i];
+        if (soundBuf[i] > hi) hi = soundBuf[i];
+    }
+    return hi - lo;
+}
+
 void sampleLight(SensorReading& r) {
     if (lightBufCount > 0) {
         r.light = (int)(lightBufSum / (long)lightBufCount);
@@ -283,6 +297,73 @@ String statusJson() {
     return j;
 }
 
+// --- BME280 diagnostics ---
+
+// Print the chip ID and the factory temperature calibration words. A BME280
+// reports ID 0x60; dig_T1 is typically ~27000-29000 and dig_T2 ~25000-27000.
+// Garbage here (0, 0xFFFF, wildly different on each boot) means the I2C link
+// is corrupting reads, which would explain absurd temperatures.
+// Read len bytes starting at reg. Uses a STOP between the register write and
+// the read (no repeated start) to rule out bus-sequencing quirks. Returns the
+// Wire error code (0 = ok) or 0xFF on a short read.
+uint8_t bmeReadRegs(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t len) {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    uint8_t err = Wire.endTransmission();
+    if (err) return err;
+    if (Wire.requestFrom(addr, len) != len) return 0xFF;
+    for (uint8_t i = 0; i < len; i++) buf[i] = Wire.read();
+    return 0;
+}
+
+void dumpBmeCalibration(uint8_t addr) {
+    uint8_t id = 0;
+    uint8_t e1 = bmeReadRegs(addr, 0xD0, &id, 1);  // chip ID register
+
+    uint8_t c[6] = {0};
+    uint8_t e2 = bmeReadRegs(addr, 0x88, c, 6);    // dig_T1..dig_T3, little-endian
+    uint16_t t1 = c[0] | (c[1] << 8);
+    int16_t  t2 = (int16_t)(c[2] | (c[3] << 8));
+    int16_t  t3 = (int16_t)(c[4] | (c[5] << 8));
+    Serial.printf("BME280 @0x%02X: chip_id=0x%02X%s dig_T1=%u dig_T2=%d dig_T3=%d (i2c err %u/%u)\n",
+        addr, id, id == 0x60 ? " (BME280)" : id == 0x58 ? " (BMP280!)" : " (unexpected)",
+        t1, t2, t3, e1, e2);
+}
+
+// Write one forced-mode conversion request and read back. Tells apart "writes
+// never land" (ctrl_meas reads back 00) from "chip converts fine but later
+// falls back to sleep/reset" (ctrl_meas ok, raw data moves off 0x800000).
+void bmeForcedTest(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    Wire.write(0xF2); Wire.write(0x01);        // ctrl_hum: humidity x1
+    uint8_t e1 = Wire.endTransmission();
+    Wire.beginTransmission(addr);
+    Wire.write(0xF4); Wire.write(0x25);        // ctrl_meas: T x1, P x1, forced
+    uint8_t e2 = Wire.endTransmission();
+    uint8_t ctrlNow = 0;
+    bmeReadRegs(addr, 0xF4, &ctrlNow, 1);
+    delay(20);                                 // x1/x1/x1 conversion is <10 ms
+    uint8_t r[8] = {0};
+    uint8_t e3 = bmeReadRegs(addr, 0xF7, r, 8);
+    Serial.printf("BME forced test: write err %u/%u, ctrl_meas after write=%02X, "
+                  "raw P=%02X%02X%02X T=%02X%02X%02X H=%02X%02X (read err %u)%s\n",
+        e1, e2, ctrlNow, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], e3,
+        e3 ? "  <-- chip dropped off the bus mid-conversion (power/contact?)"
+           : (r[3] == 0x80 && r[4] == 0 && r[5] == 0) ? "  <-- still reset value, no conversion"
+           : "  <-- converted");
+}
+
+// One-line raw register view: status (F3), ctrl_meas (F4, low 2 bits = mode:
+// 00 sleep, 11 normal), config (F5) and the raw P/T/H ADC bytes (F7-FE). If the
+// raw bytes never change between prints, the sensor isn't converting.
+void printBmeRaw(uint8_t addr) {
+    uint8_t r[12] = {0};
+    uint8_t err = bmeReadRegs(addr, 0xF3, r, 12);
+    Serial.printf("[BME raw] err=%u status=%02X ctrl_meas=%02X config=%02X "
+                  "P=%02X%02X%02X T=%02X%02X%02X H=%02X%02X\n",
+        err, r[0], r[1], r[2], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]);
+}
+
 // --- Startup self-test ---
 
 void runSelfTest() {
@@ -340,6 +421,8 @@ void setup() {
     } else {
         Serial.println("BME280 initialized");
     }
+    dumpBmeCalibration(0x76);
+    bmeForcedTest(0x76);
 
     pinMode(PIN_KY037_A, INPUT);
     pinMode(PIN_PHOTO, INPUT);
@@ -405,32 +488,49 @@ void loop() {
         pms.powerOn();
         resetPmsBuffer();
         pmsOn = true;
+        pmsOnSince = now;
     }
 
     // Drain decoded frames into the rolling buffer while the sensor is powered
     if (pmsOn && pms.available()) {
         PMS5003::Data d;
-        if (pms.read(&d)) pushPmsFrame(d.pm1_0, d.pm2_5, d.pm10);
+        if (pms.read(&d)) {
+            pushPmsFrame(d.pm1_0, d.pm2_5, d.pm10);
+            lastPmsFrame = d;
+        }
     }
 
 #if PMS_DEBUG_LIVE
-    // Every 5s print the average of the last 5 frames for live smoke/dust testing.
+    // Every 5s print live diagnostics: one PMS line and one environment line.
+    // t+ is seconds since the PMS woke, so settling time can be read directly.
     static unsigned long lastPmsDebug = 0;
     if (pmsOn && now - lastPmsDebug >= 5000) {
         lastPmsDebug = now;
-        unsigned k = pmsBufCount < 5 ? pmsBufCount : 5;
-        if (k > 0) {
-            long a = 0, b = 0, c = 0;
-            for (unsigned i = 0; i < k; i++) {
-                unsigned idx = (pmsBufPos + PMS_BUF_SIZE - 1 - i) % PMS_BUF_SIZE;
-                a += pm1Buf[idx];
-                b += pm25Buf[idx];
-                c += pm10Buf[idx];
-            }
-            Serial.printf("[PMS debug] last %u frames: PM1.0=%ld PM2.5=%ld PM10=%ld\n",
-                k, a / (long)k, b / (long)k, c / (long)k);
+        PMS5003::DebugStats s = pms.getDebugStats();
+        const PMS5003::Data& f = lastPmsFrame;
+        if (s.framesDecoded > 0 || f.frameIntervalMs > 0) {
+            Serial.printf("[PMS t+%lus] atm=%u/%u/%u cf1=%u/%u/%u | n>0.3=%u >0.5=%u >1=%u >2.5=%u >5=%u >10=%u"
+                          " | dt=%lums frames=%lu bad=%lu\n",
+                (now - pmsOnSince) / 1000,
+                f.pm1_0, f.pm2_5, f.pm10, f.pm1_0_cf1, f.pm2_5_cf1, f.pm10_cf1,
+                f.cnt_0_3, f.cnt_0_5, f.cnt_1_0, f.cnt_2_5, f.cnt_5_0, f.cnt_10,
+                (unsigned long)f.frameIntervalMs, (unsigned long)s.framesDecoded,
+                (unsigned long)s.checksumFailures);
         } else {
-            Serial.println("[PMS debug] no frames yet");
+            Serial.printf("[PMS t+%lus] no frames (bytes=%lu)\n",
+                (now - pmsOnSince) / 1000, (unsigned long)s.bytesReceived);
+        }
+
+        if (bmeOk) {
+            printBmeRaw(0x76);
+            Serial.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | sound avg=%ld p2p=%d | light=%ld\n",
+                bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F,
+                soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
+                lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
+        } else {
+            Serial.printf("[ENV] BME not found | sound avg=%ld p2p=%d | light=%ld\n",
+                soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
+                lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
         }
     }
 #endif
