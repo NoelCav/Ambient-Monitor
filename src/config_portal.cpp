@@ -1,6 +1,8 @@
 #include "config_portal.h"
 #include "params.h"
+#include "data_log.h"
 #include <WebServer.h>
+#include <LittleFS.h>
 
 static WebServer server(80);
 
@@ -66,6 +68,17 @@ static void handleRoot() {
 
         "<button type='submit'>Save &amp; Reboot</button></form>"
 
+        "<h3>Data log</h3>"
+        + (dataLogMounted()
+            ? "<p><a href='/log.csv'>Download log.csv</a> &middot; "
+              "<a href='/log.old.csv'>log.old.csv</a> "
+              "<span class='hint'>(" + String(dataLogSize() / 1024) + " KB used; "
+              "one row per sample, survives firmware updates)</span></p>"
+              "<form method='POST' action='/log/clear' "
+              "onsubmit=\"return confirm('Delete the whole data log?')\">"
+              "<button type='submit'>Clear log</button></form>"
+            : String("<p class='hint'>Log storage not mounted.</p>")) +
+
         "<script>"
         "function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}"
         "function row(label,val,lvl){"
@@ -128,10 +141,33 @@ static void handleStatus() {
     server.send(200, "application/json", statusJson());
 }
 
+// Stream a log file as a CSV download. The file name carries the device ID so
+// downloads from several monitors don't overwrite each other.
+static void sendLogFile(const char* path, const char* suffix) {
+    if (!dataLogMounted() || !LittleFS.exists(path)) {
+        server.send(404, "text/plain", "No log file yet");
+        return;
+    }
+    File f = LittleFS.open(path, FILE_READ);
+    server.sendHeader("Content-Disposition",
+        "attachment; filename=\"" + params().deviceId + suffix + ".csv\"");
+    server.streamFile(f, "text/csv");
+    f.close();
+}
+
+static void handleLogClear() {
+    dataLogClear();
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
 void configPortalSetup() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status.json", HTTP_GET, handleStatus);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/log.csv", HTTP_GET, [] { sendLogFile(DATA_LOG_PATH, "-log"); });
+    server.on("/log.old.csv", HTTP_GET, [] { sendLogFile(DATA_LOG_OLD_PATH, "-log-old"); });
+    server.on("/log/clear", HTTP_POST, handleLogClear);
     server.onNotFound(handleRoot);  // simple captive-portal-style fallback
     server.begin();
     Serial.println("Config portal: HTTP server started on port 80");

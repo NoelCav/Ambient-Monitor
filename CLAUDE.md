@@ -20,6 +20,7 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 | `src/sensor_reading.h` | `SensorReading` struct shared across modules |
 | `src/wifi_manager.h/.cpp` | Non-blocking WiFi + NTP time sync + SoftAP fallback |
 | `src/firestore_upload.h/.cpp` | Ring buffer queue + Firestore upload with retry |
+| `src/data_log.h/.cpp` | Persistent CSV log on LittleFS (one row per sample), served by the portal |
 | `lib/PMS5003/` | Custom PMS5003 UART parser (non-blocking, SET pin power control) |
 | `src/secrets.h` | WiFi + Firebase device credentials (gitignored) |
 | `src/secrets.h.example` | Template for `secrets.h` |
@@ -39,6 +40,13 @@ Environmental monitoring firmware for ESP32-S3 DevKit C1. Reads BME280 (temp/hum
 5. A flush opens once `batch_size` samples have accumulated; `firestoreLoop()` then drains the queue to the `raw` collection non-blockingly (5 per loop) until empty. Effective upload interval = `sample_interval_s × batch_size`.
 6. If upload fails, reading stays in queue and is retried on the next flush. If buffer overflows, oldest reading is dropped.
 7. Sensor dropouts degrade gracefully: invalid BME/PMS reads set `*_valid=false` (BME re-inits on the next sample); no crash or data interruption.
+
+## Data log (on-device)
+- `dataLogAppend()` writes one CSV row per sample to `/log.csv` on the LittleFS `spiffs` partition. It always logs, whatever `upload_enabled` is set to. Columns: epoch (empty before NTP), uptime_s, boot (NVS counter, namespace `datalog`), device_id, BME, PM + particle counts, sound avg/peak/p2p/p2p_max, light. Invalid sensors leave their columns empty.
+- It **survives firmware uploads** because `upload` only writes the app partition. It is lost on `pio run -t uploadfs`, a chip erase, or a partition-table change, which is why `platformio.ini` pins `board_build.partitions = default_8MB.csv`.
+- It rotates to `/log.old.csv` at `LOG_MAX_BYTES` (512 KB, `config.h`), and also at boot when the stored header differs from the current columns, so each file has exactly one layout. Don't append rows under a mismatched header.
+- Portal: `GET /log.csv` and `/log.old.csv` download as `<device_id>-log.csv`; `POST /log/clear` deletes both.
+- Sound peak-hold: `sound_p2p_max` is the loudest 1 s block since the previous sample. The live `[ENV]` line shows `max5s`, the loudest 1 s block since the previous print.
 
 ## Firestore
 - **Collection:** `raw` — one document per reading, auto-generated IDs

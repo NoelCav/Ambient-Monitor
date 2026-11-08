@@ -8,6 +8,7 @@
 #include "wifi_manager.h"
 #include "firestore_upload.h"
 #include "config_portal.h"
+#include "data_log.h"
 
 Adafruit_BME280 bme;
 PMS5003 pms;
@@ -29,6 +30,10 @@ unsigned soundBufPos = 0;
 unsigned soundBufCount = 0;
 unsigned long lastSoundTick = 0;
 long soundBufSum = 0;
+int soundBlkMin = 4095, soundBlkMax = 0;  // current 1s block, for peak-hold
+unsigned soundBlkN = 0;
+int soundP2pMaxSample = 0;  // loudest 1s block since the last sample
+int soundP2pMaxDebug = 0;   // loudest 1s block since the last debug print
 
 // Rolling light buffer (samples every 100ms)
 const unsigned LIGHT_BUF_SIZE = 10;
@@ -197,17 +202,6 @@ void sampleBME280(SensorReading& r) {
     if (!r.bme_valid) bmeOk = false;
 }
 
-void sampleSound(SensorReading& r) {
-    r.sound_avg = 0;
-    r.sound_peak = 0;
-    if (soundBufCount > 0) {
-        r.sound_avg = (int)(soundBufSum / (long)soundBufCount);
-        for (unsigned i = 0; i < soundBufCount; ++i) {
-            if (soundBuf[i] > r.sound_peak) r.sound_peak = soundBuf[i];
-        }
-    }
-}
-
 // Max - min over the rolling sound buffer. The KY-037 AO is a DC bias plus the
 // audio signal, so the swing tracks loudness better than the average does.
 int soundPeakToPeak() {
@@ -218,6 +212,20 @@ int soundPeakToPeak() {
         if (soundBuf[i] > hi) hi = soundBuf[i];
     }
     return hi - lo;
+}
+
+void sampleSound(SensorReading& r) {
+    r.sound_avg = 0;
+    r.sound_peak = 0;
+    if (soundBufCount > 0) {
+        r.sound_avg = (int)(soundBufSum / (long)soundBufCount);
+        for (unsigned i = 0; i < soundBufCount; ++i) {
+            if (soundBuf[i] > r.sound_peak) r.sound_peak = soundBuf[i];
+        }
+    }
+    r.sound_p2p = soundPeakToPeak();
+    r.sound_p2p_max = soundP2pMaxSample > r.sound_p2p ? soundP2pMaxSample : r.sound_p2p;
+    soundP2pMaxSample = 0;
 }
 
 void sampleLight(SensorReading& r) {
@@ -234,6 +242,12 @@ void samplePMS(SensorReading& r) {
         r.pm1_0 = (uint16_t)(pm1Sum  / (long)pmsBufCount);
         r.pm2_5 = (uint16_t)(pm25Sum / (long)pmsBufCount);
         r.pm10  = (uint16_t)(pm10Sum / (long)pmsBufCount);
+        r.cnt_0_3 = lastPmsFrame.cnt_0_3;
+        r.cnt_0_5 = lastPmsFrame.cnt_0_5;
+        r.cnt_1_0 = lastPmsFrame.cnt_1_0;
+        r.cnt_2_5 = lastPmsFrame.cnt_2_5;
+        r.cnt_5_0 = lastPmsFrame.cnt_5_0;
+        r.cnt_10  = lastPmsFrame.cnt_10;
     }
 }
 
@@ -433,6 +447,7 @@ void setup() {
     Serial.println("Ambient Monitor - ESP32 firmware starting");
 
     paramsLoad();
+    dataLogSetup();
 
     Wire.begin(PIN_BME_SDA, PIN_BME_SCL);
     Wire.setTimeOut(50);  // don't block boot if a line is stuck low (shorted bus)
@@ -496,6 +511,20 @@ void loop() {
             soundBufSum += v;
             soundBufPos = (soundBufPos + 1) % SOUND_BUF_SIZE;
         }
+
+        // Peak-hold: p2p of each consecutive 1s block, keeping the loudest
+        // block since the last sample / debug print so short noises between
+        // reports aren't missed.
+        if (v < soundBlkMin) soundBlkMin = v;
+        if (v > soundBlkMax) soundBlkMax = v;
+        if (++soundBlkN >= SOUND_BUF_SIZE) {
+            int p2p = soundBlkMax - soundBlkMin;
+            if (p2p > soundP2pMaxSample) soundP2pMaxSample = p2p;
+            if (p2p > soundP2pMaxDebug)  soundP2pMaxDebug = p2p;
+            soundBlkMin = 4095;
+            soundBlkMax = 0;
+            soundBlkN = 0;
+        }
     }
 
     // Light sampling into rolling buffer
@@ -556,19 +585,22 @@ void loop() {
                 (now - pmsOnSince) / 1000, (unsigned long)s.bytesReceived);
         }
 
+        // Sound/light summary shared by both ENV variants. p2p is the last 1s;
+        // max5s is the loudest 1s block since the previous print.
+        char other[64];
+        snprintf(other, sizeof(other), "sound p2p=%d max5s=%d | light=%ld",
+            soundPeakToPeak(), soundP2pMaxDebug,
+            lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
+        soundP2pMaxDebug = 0;
+
         if (bmeOk && bmeMeasure()) {
-            Serial.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | sound avg=%ld p2p=%d | light=%ld\n",
-                bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F,
-                soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
-                lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
+            Serial.printf("[ENV] T=%.2fC H=%.1f%% P=%.1fhPa | %s\n",
+                bme.readTemperature(), bme.readHumidity(), bme.readPressure() / 100.0F, other);
         } else {
             // Raw registers only on failure: shows whether the chip is asleep,
             // stuck at reset values, or gone from the bus.
             if (bmeOk) printBmeRaw(bmeAddr);
-            Serial.printf("[ENV] BME %s | sound avg=%ld p2p=%d | light=%ld\n",
-                bmeOk ? "measurement failed" : "not found",
-                soundBufCount ? soundBufSum / (long)soundBufCount : 0L, soundPeakToPeak(),
-                lightBufCount ? lightBufSum / (long)lightBufCount : 0L);
+            Serial.printf("[ENV] BME %s | %s\n", bmeOk ? "measurement failed" : "not found", other);
         }
     }
 #endif
@@ -583,6 +615,7 @@ void loop() {
         sampleLight(latestReading);
         samplePMS(latestReading);
         printReading(latestReading);
+        dataLogAppend(latestReading);
 
 #if !PMS_DEBUG_LIVE
         pms.powerOff();

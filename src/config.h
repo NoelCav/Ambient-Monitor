@@ -90,6 +90,13 @@
 #define QUEUE_SIZE 1008
 #endif
 
+// --- Persistent data log (LittleFS, survives firmware uploads) ---
+// log.csv rotates to log.old.csv at this size, so ~2x is kept. ~130 bytes/row:
+// 512 KB ~= 4000 rows ~= 28 days at the 10-min default, ~11 h at 10 s.
+#ifndef LOG_MAX_BYTES
+#define LOG_MAX_BYTES (512 * 1024)
+#endif
+
 // --- AP fallback (used when the device can't join the configured WiFi) ---
 #ifndef AP_SSID
 #define AP_SSID "AmbientMonitor-setup"
