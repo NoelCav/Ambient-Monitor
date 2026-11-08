@@ -4,6 +4,7 @@
 #include "config.h"
 #include "dust.h"
 #include "health.h"
+#include "light.h"
 #include "params.h"
 #include "sampler.h"
 #include "tasks.h"
@@ -20,11 +21,12 @@ static String readingJson(const Reading& r, const String& extra = "") {
     snprintf(buf, sizeof(buf),
         "{\"age_s\":%lu,\"climate\":{\"ok\":%s,\"temp\":%.2f,\"hum\":%.1f,\"pres\":%.1f},"
         "\"dust\":{\"ok\":%s,\"pm\":[%u,%u,%u],\"cf1\":[%u,%u,%u],\"cnt\":[%u,%u,%u,%u,%u,%u],"
-        "\"est\":%.1f,\"n\":%u,\"awake_s\":%lu},\"sound\":{\"avg\":%.1f,\"peak\":%.1f},\"light\":%.0f",
+        "\"est\":%.1f,\"n\":%u,\"awake_s\":%lu},\"sound\":{\"avg\":%.1f,\"peak\":%.1f},\"light\":%.0f,\"lux\":%.1f",
         (unsigned long)((millis() - r.at_ms) / 1000), tf(r.climate.ok), r.climate.temp, r.climate.hum, r.climate.pres,
         tf(r.dustOk), d.pm[0], d.pm[1], d.pm[2], d.cf1[0], d.cf1[1], d.cf1[2],
         d.cnt[0], d.cnt[1], d.cnt[2], d.cnt[3], d.cnt[4], d.cnt[5],
-        pm25AltCf3(d), r.dustFrames, (unsigned long)r.dustAwakeS, r.soundAvg, r.soundPeak, r.light);
+        pm25AltCf3(d), r.dustFrames, (unsigned long)r.dustAwakeS, r.soundAvg, r.soundPeak, r.light,
+        lightLux(r.light, params().ldrR10));
     return String(buf) + extra + "}";
 }
 
@@ -38,6 +40,7 @@ String statusJson() {
     j += ",\"sys\":{\"uptime_s\":" + String(millis() / 1000);
     j += ",\"reset\":\"" + String(resetReasonStr()) + "\"";
     j += ",\"heap\":" + String(ESP.getFreeHeap());
+    j += ",\"fw\":\"" + String(firmwareState()) + "\",\"build\":\"" + String(__DATE__ " " __TIME__) + "\"";
     j += ",\"rssi\":" + String(WiFi.RSSI());
     j += ",\"test\":" + String(tf(params().testMode));
     j += ",\"sample_s\":" + String(params().sampleIntervalS);
@@ -46,6 +49,7 @@ String statusJson() {
 
     j += ",\"hw\":{\"climate\":" + String(tf(climateFound())) + ",\"climate_addr\":" + String(climateAddr());
     j += ",\"dust_on\":" + String(tf(dust.on)) + ",\"dust_s\":" + String(dust.awakeMs / 1000);
-    j += ",\"warm_s\":" + String(PMS_WARMUP_MS / 1000) + "}";
+    j += ",\"warm_s\":" + String(PMS_WARMUP_MS / 1000);
+    j += ",\"ldr_r10\":" + String(params().ldrR10, 0) + "}";
     return j + "}";
 }

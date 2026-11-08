@@ -15,6 +15,10 @@ void samplerBegin();
 // needed). The regular interval restarts from that sample.
 void samplerRequestSample();
 
+// Watchdog self-test: the sampler stops feeding the task watchdog, which
+// must reboot the device (reset reason task_wdt) within WATCHDOG_S.
+void samplerHang();
+
 // Per-5 s dust diagnostics that go with the test reading.
 struct DustDiag {
     uint32_t frames = 0, errors = 0, bytes = 0;  // in the last LIVE_INTERVAL_MS

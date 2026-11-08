@@ -174,8 +174,12 @@ function pmQ(B,v){return [band(B,v),grad([[B[0][0],GREEN],[B[1][0],YEL],[B[2][0]
 // SQ thresholds are provisional; see the KY-037 notes in CLAUDE.md.
 function sndQ(v){return [band([[SQ[0],'Quiet'],[SQ[1],'Some noise'],[SQ[2],'Loud'],[1e9,'Very loud']],v),grad([[SQ[0],GREEN],[SQ[1],YEL],[SQ[2],RED]],v)]}
 var SQ=[4,15,60];
-// Light: dark grey (dark) -> yellow (bright). Not good or bad.
-function lightQ(v){return [band([[400,'Dark'],[1000,'Dim'],[2000,'Indoor lighting'],[3000,'Bright indoor'],[4094,'Bright'],[1e9,'Saturated']],v),grad([[0,'#4b5563'],[4095,'#eab308']],v),1]}
+// Light in lux: dark grey (dark) -> yellow (bright), on a log scale. Not good or bad.
+function lightQ(lux){return [band([[10,'Dark'],[50,'Dim'],[200,'Indoor lighting'],[500,'Bright indoor'],[5000,'Very bright'],[1e9,'Daylight']],lux),grad([[0,'#4b5563'],[3,'#eab308']],Math.log10(1+lux)),1]}
+// Approximate lux from the raw photoresistor reading. Same formula as
+// lightLux() in lib/ambient/light.h; r10 is the calibration (`light cal`).
+var SAT=4090;
+function lux(raw,r10){var v=Math.max(raw,1)*3.1/4095,ohm=10000*(3.3-v)/v;return 10*Math.pow(r10/ohm,1/0.6)}
 // The nine reading tiles for one Reading (status.json "sample" or "live").
 // dustMsg is shown in the PM tiles when the dust sensor has no data.
 function readings(r,dustMsg){
@@ -185,7 +189,8 @@ function readings(r,dustMsg){
   :none(['Temperature','Humidity','Pressure'],'No reading');
  t+=u.ok?tile('PM2.5 est. (raw '+u.pm[1]+')',Math.round(u.est),UG,pmQ(PM25,u.est))+tile('PM1.0',u.pm[0],UG,pmQ(PM25,u.pm[0]))+tile('PM10',u.pm[2],UG,pmQ(PM10,u.pm[2]))
   :none(['PM2.5','PM1.0','PM10'],dustMsg);
- t+=tile('Sound avg',r.sound.avg.toFixed(1),'',sndQ(r.sound.avg))+tile('Sound peak',r.sound.peak.toFixed(1),'',sndQ(r.sound.peak))+tile('Light',r.light,'/ 4095',lightQ(r.light));
+ t+=tile('Sound avg',r.sound.avg.toFixed(1),'',sndQ(r.sound.avg))+tile('Sound peak',r.sound.peak.toFixed(1),'',sndQ(r.sound.peak))+
+  tile('Light',(r.light>=SAT?'≥':'')+Math.round(r.lux),'lux',r.light>=SAT?['Sensor maxed out',lightQ(r.lux)[1],1]:lightQ(r.lux));
  return grid(t)}
 // Device-detail tiles are plain; only real problems get an outline.
 var RESET={poweron:'Power connected',software:'Restart or update',panic:'Crash (see console)',
@@ -219,7 +224,8 @@ function render(d){
    [h.dust_on?(h.dust_s<STABLE_S?'Warming up':'Stable'):'Wakes '+h.warm_s+' s before a sample',null]))+
    '<div class="muted">Frame and particle details need test mode.</div>'}
  // Device details: timing, then status, then system.
- t=tile('Uptime',dur(s.uptime_s),'',null)+tile('Next sample','in '+dur(s.next_sample_s),'',null)+tile('Sample every',dur(s.sample_s),'',null);
+ t=tile('Uptime',dur(s.uptime_s),'',null)+tile('Next sample','in '+dur(s.next_sample_s),'',['every '+dur(s.sample_s),null]);
+ t+=tile('Firmware',s.fw=='pending'?'On trial':'OK','',[s.fw=='pending'?'Rolls back if it fails':s.build,s.fw=='pending'?YEL:null]);
  t+=tile('Mode',testOn?'Test':'Normal','',[testOn?'Dust sensor always on':'Dust sensor sleeps',null]);
  t+=tile('Climate sensor',h.climate?'OK':'Missing','',h.climate?['BME280 at 0x'+h.climate_addr.toString(16),null]:['Check wiring',RED]);
  t+=tile('WiFi',s.rssi,'dBm',s.rssi>=-70?[s.rssi>=-60?'Strong':'Good',null]:s.rssi>=-80?['Weak',YEL]:['Very weak',RED]);
@@ -335,7 +341,7 @@ var SER=[
  {t:'PM1.0',u:UG,d:0,l:[function(r){return r.pm1_0}]},
  {t:'PM10',u:UG,d:0,l:[function(r){return r.pm10}]},
  {t:'Sound',u:'',d:1,l:[function(r){return r.sound_avg_rms},function(r){return r.sound_peak_rms}],n:['avg','peak']},
- {t:'Light',u:'/ 4095',d:0,l:[function(r){return r.light}]}];
+ {t:'Light',u:'lux',d:0,l:[function(r){return lux(r.light,last?last.hw.ldr_r10:15000)}]}];
 var COL=['#2563eb','#dc2626'];
 function tfmt(e){return new Date(e*1000).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}
 function draw(){if(!G)return;var rows=G.rows;

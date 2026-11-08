@@ -15,6 +15,8 @@ struct Params {
     uint32_t sampleIntervalS;
     // Test mode: the dust sensor stays on and [TEST]/[DUST] lines print every 5 s.
     bool     testMode;
+    bool     ledOn;       // status LED
+    float    ldrR10;      // photoresistor ohms at 10 lux (light.h); set by `light cal`
 };
 
 // Global accessor for the loaded params.

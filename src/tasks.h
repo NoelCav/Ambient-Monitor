@@ -7,6 +7,7 @@
 //   soundlight  prio 5  continuous ADC: sound RMS + light
 //   dust        prio 4  PMS5003 UART + power pin
 //   sampler     prio 3  schedule, readings, data log
+//   led         prio 2  status LED colour and patterns
 //   loopTask    prio 1  Arduino loop(): WiFi, OTA, web portal, console
 // Each sensor task owns its hardware and keeps its state behind one mutex; the
 // others only call its functions. All tasks are watched by the task watchdog

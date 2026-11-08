@@ -8,6 +8,7 @@
 #include "data_log.h"
 #include "dust.h"
 #include "health.h"
+#include "led.h"
 #include "params.h"
 #include "sampler.h"
 #include "soundlight.h"
@@ -26,6 +27,7 @@ void setup() {
     soundLightBegin();
     dustBegin();
     samplerBegin();
+    ledBegin();
 
     wifiSetup();
     configPortalSetup();
@@ -39,5 +41,6 @@ void loop() {
     configPortalLoop();
     consoleLoop();
     commandsLoop();
+    healthLoop();
     delay(2);
 }

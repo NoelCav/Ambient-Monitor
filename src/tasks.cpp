@@ -3,7 +3,7 @@
 #include "console.h"
 #include <esp_task_wdt.h>
 
-static const int MAX_TASKS = 6;
+static const int MAX_TASKS = 8;
 static TaskHandle_t handles[MAX_TASKS];
 static int count = 0;
 

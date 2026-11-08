@@ -1,6 +1,7 @@
 #include "params.h"
 #include "config.h"
 #include "console.h"
+#include "light.h"
 #include <Preferences.h>
 
 static Params g_params;
@@ -14,6 +15,7 @@ static void validate(Params& p) {
     if (p.sampleIntervalS < 1)        p.sampleIntervalS = DEFAULT_SAMPLE_INTERVAL_S;
     if (p.sampleIntervalS > 86400)    p.sampleIntervalS = 86400;  // keeps ms math in range
     if (p.wifi.size() > WIFI_MAX)     p.wifi.resize(WIFI_MAX);
+    if (!(p.ldrR10 > 100 && p.ldrR10 < 1e7f)) p.ldrR10 = LDR_R10_DEFAULT;
 }
 
 static String key(const char* prefix, size_t i) { return String(prefix) + i; }
@@ -39,6 +41,8 @@ void paramsLoad() {
     g_params.deviceId        = prefs.getString("device_id", DEVICE_ID);
     g_params.sampleIntervalS = prefs.getUInt("sample_s", DEFAULT_SAMPLE_INTERVAL_S);
     g_params.testMode        = prefs.getBool("live_dbg", DEFAULT_TEST_MODE);  // key predates the name
+    g_params.ledOn           = prefs.getBool("led", true);
+    g_params.ldrR10          = prefs.getFloat("ldr_r10", LDR_R10_DEFAULT);
     prefs.end();
 
     validate(g_params);
@@ -67,6 +71,8 @@ void paramsSave(const Params& in) {
     prefs.putString("device_id", p.deviceId);
     prefs.putUInt("sample_s", p.sampleIntervalS);
     prefs.putBool("live_dbg", p.testMode);
+    prefs.putBool("led", p.ledOn);
+    prefs.putFloat("ldr_r10", p.ldrR10);
     // Keys from older firmware: the single WiFi network and the Firestore upload.
     for (const char* old : {"wifi_ssid", "wifi_pass", "upload_en", "batch"}) prefs.remove(old);
     prefs.end();

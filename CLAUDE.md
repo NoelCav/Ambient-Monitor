@@ -17,6 +17,7 @@ Tasks, all on core 1 (WiFi runs on core 0). Each sensor task owns its hardware b
 | soundlight | 5 | `soundlight.cpp` | ADC1 continuous DMA (sound GPIO4 + light GPIO6, 10 kHz each) |
 | dust | 4 | `dust.cpp` | PMS5003 UART (Serial1) + SET power pin |
 | sampler | 3 | `sampler.cpp` | schedule, dust power requests, readings, data log appends |
+| led | 2 | `led.cpp` | status RGB LED (GPIO 48): air-quality colour, room-light dimming, event patterns |
 | loopTask | 1 | `main.cpp` loop() | WiFi, OTA, web portal, console, commands |
 
 The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-guarded, so any task may call `climateRead()`.
@@ -40,7 +41,8 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 | `src/console.h/.cpp` | `Console` (a `Print`): Serial + 16 KB RAM backlog for `/console.txt` and TCP port 23 |
 | `src/config.h` | Pins, defaults, timing/measurement constants, log/console sizes, passwords |
 | `src/params.h/.cpp`, `src/health.h/.cpp`, `src/wifi_manager.h/.cpp` | NVS params, reset reason, WiFi/NTP/mDNS/OTA |
-| `lib/ambient/` | Pure C++ (no Arduino): PMS frame parser, `Window`/`SoundLightStats`/`FrameAverage`, ALT-CF3 |
+| `lib/ambient/` | Pure C++ (no Arduino): PMS frame parser, `Window`/`SoundLightStats`/`FrameAverage`, ALT-CF3 + AQI bands (`air_quality.h`), console level words (`levels.h`), LDR lux (`light.h`), argument splitting (`args.h`) |
+| `docs/HARDWARE.md`, `docs/ROADMAP.md` | Hardware changes/enclosure/calibration to do; future goals |
 | `test/test_core/` | Host unit tests for `lib/ambient`: `pio test -e native` |
 
 ## Testing
@@ -57,6 +59,8 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 ## Remote debugging (no USB needed)
 - **Console:** all output goes through `Console.print*` (never `Serial.print*` directly). Read it in the portal's Console section, at `/console.txt`, or on raw TCP port 23 (backlog, then live). Every portal action runs a console command through `/cmd?c=`, so the page and the console can't diverge. Console writes never touch the network: TCP clients are fed from the backlog by `consoleLoop()` using non-blocking `send()`, so a stuck client can't stall the loop (`WiFiClient::write` can block ~10 s).
 - **OTA:** ArduinoOTA on port 3232, started in `wifiSetup()` and serviced in `wifiLoop()`. It uses our mDNS responder (ArduinoOTA's own is disabled) and also works over the SoftAP.
+- **Firmware rollback:** after an OTA update the new build runs "on trial"; `healthLoop()` (health.cpp) marks it good after `HEALTHY_AFTER_S` (60 s) with a reading taken and the portal reachable. A crash, watchdog reset or reboot before that makes the bootloader return to the previous build. `verifyRollbackLater()` is overridden so the core doesn't mark it good at startup. `status` and Device details show the state.
+- **Watchdog self-test:** `diag watchdog` hangs the sampler; expect a reboot with reset reason `task_wdt` within 30 s.
 - **Reset reason** prints at boot, appears in `status.json` and is a column in the data log. A `brownout` or `task_wdt` there explains an unexplained gap.
 
 ## Data log (on-device)
@@ -72,7 +76,7 @@ The BME280 (`climate.cpp`) has no task: forced reads take ~10 ms and are mutex-g
 - The first parser (834ae40) never decoded a frame, which made early "dead sensor" impressions a software bug. Don't name a helper `word`: Arduino.h `#define`s `word(...)`.
 - **BME280:** runs in forced mode with x1 oversampling, which avoids self-heating. `climateRead()` rejects reads still at the 0x800000 reset value, because the Adafruit lib turns those into a plausible-looking fake 23.52 °C / 82.4 % / 699 hPa. Boot prints the chip ID, calibration words and a raw forced conversion (`diag climate` repeats them). BME #1 had a cracked GND joint (resoldered, works). BME #2 is press-fit and loses contact, so it needs solder.
 - **KY-037:** AO is a DC bias plus the audio signal. Sampled continuously (DMA, 10 kHz) and measured as RMS about each 125 ms window's own mean. A sample logs `sound_avg_rms` (RMS of all sound in the interval: steady noise like a TV) and `sound_peak_rms` (loudest 125 ms window: bangs). Quiet room ≈ 2-5. Portal colour thresholds (`SQ` in config_portal.cpp: 4 / 15 / 60) are guesses until a TV/clap calibration. Runs on 3.3 V through a voltage divider (not in README) that only shrinks the signal.
-- **Light:** photoresistor divider on GPIO 6; 4095 = saturated (bright overhead light).
+- **Light:** photoresistor divider on GPIO 6 (3.3 V - LDR - GPIO 6 - 10 kOhm - GND); raw >= 4090 = maxed out (bright overhead light). The log keeps the raw mean; console, portal and graphs show approximate lux (`light.h`, GL5528-type curve, gamma 0.6). `light cal <lux>` (one-point, from a phone light meter) sets `ldrR10` in NVS; until then lux is order-of-magnitude.
 - README wiring lists PMS RX/TX swapped from a port test. Firmware uses GPIO17 as ESP RX, so PMS TX goes to GPIO17.
 
 ## Planned next

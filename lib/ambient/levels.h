@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include "air_quality.h"
 
 // Plain-language levels for the console. The portal shows the same words with
 // colours from the same thresholds (tempQ/humQ/presQ/pmQ/sndQ/lightQ in
@@ -35,18 +36,15 @@ inline const char* pressureLevel(float p) {
     return bandName(b, p);
 }
 
-// US EPA AQI bands (2024). PM1.0 has no standard; the portal uses PM2.5's.
-inline const char* pm25Level(float v) {
-    static const Band b[] = {{9, "good"}, {35.4f, "moderate"}, {55.4f, "unhealthy for sensitive"},
-                             {125.4f, "unhealthy"}, {225.4f, "very unhealthy"}, {1e9f, "hazardous"}};
-    return bandName(b, v);
+// PM: US EPA AQI bands (PM25_LIMITS / PM10_LIMITS in air_quality.h).
+inline const char* pmLevel(const float (&limits)[5], float v) {
+    static const char* const NAMES[] = {"good", "moderate", "unhealthy for sensitive", "unhealthy", "very unhealthy"};
+    for (int i = 0; i < 5; i++)
+        if (v <= limits[i]) return NAMES[i];
+    return "hazardous";
 }
-
-inline const char* pm10Level(float v) {
-    static const Band b[] = {{54, "good"}, {154, "moderate"}, {254, "unhealthy for sensitive"},
-                             {354, "unhealthy"}, {424, "very unhealthy"}, {1e9f, "hazardous"}};
-    return bandName(b, v);
-}
+inline const char* pm25Level(float v) { return pmLevel(PM25_LIMITS, v); }
+inline const char* pm10Level(float v) { return pmLevel(PM10_LIMITS, v); }
 
 // Sound RMS (ADC counts). Provisional thresholds until a TV/clap calibration.
 inline const char* soundLevel(float v) {
@@ -54,8 +52,9 @@ inline const char* soundLevel(float v) {
     return bandName(b, v);
 }
 
-inline const char* lightLevel(float v) {
-    static const Band b[] = {{400, "dark"}, {1000, "dim"}, {2000, "indoor lighting"}, {3000, "bright indoor"},
-                             {4094, "bright"}, {1e9f, "saturated"}};
-    return bandName(b, v);
+// Light in lux (see light.h; approximate unless calibrated).
+inline const char* lightLevel(float lux) {
+    static const Band b[] = {{10, "dark"}, {50, "dim"}, {200, "indoor lighting"}, {500, "bright indoor"},
+                             {5000, "very bright"}, {1e9f, "daylight"}};
+    return bandName(b, lux);
 }

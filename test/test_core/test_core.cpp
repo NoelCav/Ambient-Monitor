@@ -5,6 +5,8 @@
 #include "stats.h"
 #include "air_quality.h"
 #include "levels.h"
+#include "light.h"
+#include "args.h"
 
 void setUp() {}
 void tearDown() {}
@@ -146,7 +148,42 @@ void test_levels_band_edges_are_inclusive() {
     TEST_ASSERT_EQUAL_STRING("comfortable", tempLevel(22.5f));
     TEST_ASSERT_EQUAL_STRING("comfortable", humidityLevel(36));
     TEST_ASSERT_EQUAL_STRING("quiet", soundLevel(1.3f));
-    TEST_ASSERT_EQUAL_STRING("saturated", lightLevel(4095));
+    TEST_ASSERT_EQUAL_STRING("dim", lightLevel(30));
+    TEST_ASSERT_EQUAL_STRING("unhealthy for sensitive", pm10Level(200));
+}
+
+void test_band_index_matches_portal_gradient() {
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0, bandIndex(PM25_LIMITS, 5));
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0, bandIndex(PM25_LIMITS, 9));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.5f, bandIndex(PM25_LIMITS, (9 + 35.4f) / 2));
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 4, bandIndex(PM25_LIMITS, 500));
+    PmsFrame f = {};
+    f.pm[2] = 254;  // PM10 at the "unhealthy for sensitive" limit -> index 2, worse than PM2.5/PM1 at 0
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 2, airIndex(f));
+}
+
+void test_lux_and_one_point_calibration() {
+    // Darker -> higher LDR resistance -> lower lux, monotonic.
+    TEST_ASSERT_TRUE(lightLux(1000, LDR_R10_DEFAULT) < lightLux(2500, LDR_R10_DEFAULT));
+    TEST_ASSERT_TRUE(lightLux(2500, LDR_R10_DEFAULT) < lightLux(4000, LDR_R10_DEFAULT));
+    // Calibrating at a reading makes that reading report the measured lux.
+    float r10 = ldrR10For(2500, 300);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 300, lightLux(2500, r10));
+}
+
+void test_split_first_arg_quoted_and_plain() {
+    std::string a, b;
+    splitFirstArg("\"Home Net\" pass word", a, b);
+    TEST_ASSERT_EQUAL_STRING("Home Net", a.c_str());
+    TEST_ASSERT_EQUAL_STRING("pass word", b.c_str());
+    splitFirstArg("plain  secret ", a, b);
+    TEST_ASSERT_EQUAL_STRING("plain", a.c_str());
+    TEST_ASSERT_EQUAL_STRING("secret", b.c_str());
+    splitFirstArg("open", a, b);
+    TEST_ASSERT_EQUAL_STRING("open", a.c_str());
+    TEST_ASSERT_EQUAL_STRING("", b.c_str());
+    splitFirstArg("\"unterminated", a, b);
+    TEST_ASSERT_EQUAL_STRING("unterminated", a.c_str());
 }
 
 int main() {
@@ -160,5 +197,8 @@ int main() {
     RUN_TEST(test_frame_average_rolls_and_rounds);
     RUN_TEST(test_alt_cf3_matches_published_formula);
     RUN_TEST(test_levels_band_edges_are_inclusive);
+    RUN_TEST(test_band_index_matches_portal_gradient);
+    RUN_TEST(test_lux_and_one_point_calibration);
+    RUN_TEST(test_split_first_arg_quoted_and_plain);
     return UNITY_END();
 }

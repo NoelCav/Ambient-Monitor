@@ -1,10 +1,12 @@
 #include "commands.h"
+#include "args.h"
 #include "climate.h"
 #include "config.h"
 #include "console.h"
 #include "data_log.h"
 #include "dust.h"
 #include "health.h"
+#include "light.h"
 #include "params.h"
 #include "sampler.h"
 #include "tasks.h"
@@ -57,10 +59,18 @@ static const char* const HELP =
     "  archives are deleted if storage runs short.\n"
     "  Download: /log.csv, /saved.csv?name=<name>\n"
     "\n"
+    "DISPLAY\n"
+    "  led on | led off          status LED: colour = air quality, dims in the dark\n"
+    "  light cal <lux>           calibrate the light reading: measure the lux where the\n"
+    "                            sensor is (e.g. a phone light-meter app), then enter it.\n"
+    "                            light cal reset  goes back to the uncalibrated default\n"
+    "\n"
     "DIAGNOSTICS\n"
     "  diag climate              BME280 chip ID, calibration words, forced-measurement\n"
     "                            test, then re-initialize the sensor\n"
     "  diag i2c                  list devices on the I2C bus (climate sensor is 0x76)\n"
+    "  diag watchdog             hang the sampler task on purpose: the watchdog must\n"
+    "                            reboot the device within 30 s (reset reason task_wdt)\n"
     "  reboot                    restart in 1 s\n"
     "\n"
     "Run from the web Console tab, telnet/nc to port 23, USB serial (115200), or\n"
@@ -77,8 +87,8 @@ static void printLogStats() {
 static void printStatus() {
     SamplerState s = samplerState();
     DustStatus d = dustStatus();
-    Console.printf("uptime %lu s, reset: %s, heap %u KB\n",
-        millis() / 1000, resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024));
+    Console.printf("uptime %lu s, reset: %s, heap %u KB, firmware %s (%s %s)\n", millis() / 1000,
+        resetReasonStr(), (unsigned)(ESP.getFreeHeap() / 1024), firmwareState(), __DATE__, __TIME__);
     Console.printf("wifi: %s, ip %s, rssi %d dBm\n", wifiConnected() ? "connected" : "disconnected",
         WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
     Console.printf("mode: %s, sample every %u s, next in %lu s%s\n", params().testMode ? "test" : "normal",
@@ -126,21 +136,12 @@ static void setSampleInterval(uint32_t seconds) {
     Console.printf("sample interval %u s\n", (unsigned)params().sampleIntervalS);
 }
 
-// "<ssid> <rest>" where the SSID may be "quoted" to include spaces.
+// "<ssid> <rest>", the SSID optionally "quoted" (see args.h).
 static void splitSsid(const String& arg, String& ssid, String& rest) {
-    int end;
-    if (arg.startsWith("\"")) {
-        end = arg.indexOf('"', 1);
-        if (end < 0) end = arg.length();
-        ssid = arg.substring(1, end);
-        end++;
-    } else {
-        end = arg.indexOf(' ');
-        if (end < 0) end = arg.length();
-        ssid = arg.substring(0, end);
-    }
-    rest = end < (int)arg.length() ? arg.substring(end) : "";
-    rest.trim();
+    std::string f, r;
+    splitFirstArg(arg.c_str(), f, r);
+    ssid = f.c_str();
+    rest = r.c_str();
 }
 
 static void cmdWifi(const String& sub, const String& arg) {
@@ -160,6 +161,24 @@ static void cmdWifi(const String& sub, const String& arg) {
     } else {
         Console.println("wifi what? list | add <ssid> [pass] | rm <ssid>");
     }
+}
+
+// One-point light calibration: make the current reading equal a measured lux.
+static void lightCal(const String& arg) {
+    Params p = params();
+    Reading r = samplerState().live;
+    if (arg == "reset") {
+        p.ldrR10 = LDR_R10_DEFAULT;
+    } else {
+        float lux = arg.toFloat();
+        if (lux <= 0 || !r.at_ms || r.light < 1 || r.light >= ADC_SATURATED) {
+            Console.println("usage: light cal <lux> (with the sensor in steady, not maxed-out light)");
+            return;
+        }
+        p.ldrR10 = ldrR10For(r.light, lux);
+    }
+    paramsSave(p);
+    Console.printf("light: R10 = %.0f ohm; now %s\n", params().ldrR10, readingText(r, "light").c_str());
 }
 
 static void printSaved(const String& name, size_t bytes, void* ctx) {
@@ -276,10 +295,22 @@ void commandRun(const String& raw) {
         cmdLog(sub, arg);
     } else if (cmd == "wifi") {
         cmdWifi(sub, arg);
+    } else if (cmd == "led") {
+        if (sub == "on" || sub == "off") {
+            Params p = params();
+            p.ledOn = sub == "on";
+            paramsSave(p);
+        }
+        Console.printf("led %s\n", params().ledOn ? "on" : "off");
+    } else if (cmd == "light" && sub == "cal") {
+        lightCal(arg);
     } else if (cmd == "diag") {
         if (sub == "climate") climateDiag();
         else if (sub == "i2c") i2cScan();
-        else Console.println("diag what? climate | i2c");
+        else if (sub == "watchdog") {
+            Console.printf("sampler task hanging now; expect a task_wdt reboot within %d s\n", WATCHDOG_S);
+            samplerHang();
+        } else Console.println("diag what? climate | i2c | watchdog");
     } else if (cmd == "reboot") {
         Console.println("rebooting in 1 s...");
         rebootAt = millis() + 1000;  // let console/HTTP clients get the reply first

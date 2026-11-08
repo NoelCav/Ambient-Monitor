@@ -1,6 +1,8 @@
 #include "sampler.h"
 #include "air_quality.h"
+#include "led.h"
 #include "levels.h"
+#include "light.h"
 #include "climate.h"
 #include "config.h"
 #include "console.h"
@@ -12,6 +14,7 @@
 
 static SemaphoreHandle_t mtx;
 static SamplerState state;
+static volatile bool hang = false;  // `diag watchdog`: stop feeding the watchdog
 static uint32_t lastSampleMs = 0;
 
 // The one place a Reading is built, for logged samples and test readings.
@@ -63,7 +66,9 @@ String readingText(const Reading& r, const char* what) {
         out += buf;
     }
     if (part("light")) {
-        snprintf(buf, sizeof(buf), "light %.0f (%s)", r.light, lightLevel(r.light));
+        float lux = lightLux(r.light, params().ldrR10);
+        snprintf(buf, sizeof(buf), "light %s%.0f lux (%s; raw %.0f)", r.light >= ADC_SATURATED ? ">=" : "~", lux,
+            r.light >= ADC_SATURATED ? "sensor maxed out" : lightLevel(lux), r.light);
         out += buf;
     }
     return out;
@@ -112,6 +117,7 @@ static void samplerTask(void*) {
             Reading r = takeReading(SPAN_SAMPLE);
             Console.printf("[SAMPLE] %s\n", readingText(r, "all").c_str());
             dataLogAppend(r);
+            ledSampleTaken();
             Guard g(mtx);
             state.sample = r;
             state.requested = false;
@@ -122,6 +128,7 @@ static void samplerTask(void*) {
             uint32_t since = millis() - lastSampleMs;
             state.nextSampleS = since >= interval ? 0 : (interval - since) / 1000;
         }
+        while (hang) vTaskDelay(pdMS_TO_TICKS(1000));  // stuck: the watchdog reboots us
         taskFeed();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -135,6 +142,8 @@ void samplerBegin() {
     lastSampleMs = millis() - (interval > PMS_WARMUP_MS ? interval - PMS_WARMUP_MS : 0);
     startTask("sampler", samplerTask, 6144, 3);
 }
+
+void samplerHang() { hang = true; }
 
 void samplerRequestSample() {
     Guard g(mtx);
