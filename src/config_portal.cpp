@@ -286,7 +286,7 @@ function clearLog(){if(!confirm('Delete the current log? Saved logs are kept.'))
 
 // Graphs: one small chart per reading on a shared time axis, drawn as SVG from
 // the CSV in the browser. Raw values (the trend data); PM2.5 also shows the
-// logged ALT-CF3 indoor estimate, dashed. Rows without a clock time are skipped.
+// ALT-CF3 indoor estimate, dashed. Rows without a clock time are skipped.
 var G=null;
 function fillSources(){var s=$('gsrc'),cur=s.value,o='<option value="">Current log</option><option value="*">All logs combined</option>';
  (LOGS?LOGS.saved:[]).map(function(x){return x.name}).sort().reverse().forEach(function(n){o+='<option value="'+esc(n)+'">'+esc(n)+'</option>'});
@@ -303,11 +303,16 @@ function graph(){var src=$('gsrc').value;set('gmsg','Loading…');$('charts').in
   ts.forEach(function(t){if(t)parse(t).forEach(function(r){if(!(r.epoch>0)){skipped++;return}byT[r.epoch]=r})});
   var rows=Object.keys(byT).map(function(k){return byT[k]}).sort(function(a,b){return a.epoch-b.epoch});
   G={rows:rows,skipped:skipped};draw()}).catch(function(){set('gmsg','Could not load the log.')})}
+// ALT-CF3 from a log row's particle counts. Same formula as pm25AltCf3() in
+// lib/ambient/air_quality.h: computed here rather than logged, since a
+// derived column would cost log space on every row.
+function est(r){var n1=Math.max(0,r.cnt_0_3-r.cnt_0_5),n2=Math.max(0,r.cnt_0_5-r.cnt_1_0),n3=Math.max(0,r.cnt_1_0-r.cnt_2_5);
+ return 3*(0.00030418*n1+0.0018512*n2+0.02069706*n3)}
 var SER=[
  {t:'Temperature',u:'°F',d:1,l:[function(r){return r.temp_c*9/5+32}]},
  {t:'Humidity',u:'%',d:0,l:[function(r){return r.humidity_pct}]},
  {t:'Pressure',u:'hPa',d:1,l:[function(r){return r.pressure_hpa}]},
- {t:'PM2.5',u:UG,d:0,l:[function(r){return r.pm2_5},function(r){return r.pm2_5_est}],n:['raw','est.']},
+ {t:'PM2.5',u:UG,d:0,l:[function(r){return r.pm2_5},est],n:['raw','est.']},
  {t:'PM1.0',u:UG,d:0,l:[function(r){return r.pm1_0}]},
  {t:'PM10',u:UG,d:0,l:[function(r){return r.pm10}]},
  {t:'Sound',u:'',d:1,l:[function(r){return r.sound_avg_rms},function(r){return r.sound_peak_rms}],n:['avg','peak']},
