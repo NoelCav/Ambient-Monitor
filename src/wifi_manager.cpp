@@ -5,6 +5,7 @@
 #include "params.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <ArduinoOTA.h>
 #include <WiFiMulti.h>
 #include <time.h>
@@ -29,10 +30,9 @@ static void checkNtpSync() {
     }
 }
 
-// Sanitize device_id into a valid DNS label: lowercase [a-z0-9-], collapse and
-// trim '-', fall back to "ambient-monitor" if empty.
-static String mdnsHostname() {
-    String src = params().deviceId;
+// A valid DNS label: lowercase [a-z0-9-], '-' collapsed and trimmed,
+// "ambient-monitor" if nothing is left.
+static String dnsLabel(const String& src) {
     String out;
     for (unsigned i = 0; i < src.length(); ++i) {
         char c = src[i];
@@ -48,10 +48,23 @@ static String mdnsHostname() {
     return out;
 }
 
-// (Re)start the mDNS responder bound to the device hostname.
+// The .local address follows the display name (Noels-Bedroom ->
+// noels-bedroom.local); the device ID's name stays an alias, so old links
+// keep working. Data is keyed by device ID, so neither affects history.
+static String mdnsHostname() { return dnsLabel(deviceLabel(params())); }
+static String idHostname() { return dnsLabel(params().deviceId); }
+
+// (Re)start the mDNS responder: the name's hostname, the device ID's as an alias.
 static void startMdns() {
-    String host = mdnsHostname();
+    String host = mdnsHostname(), alias = idHostname();
+    MDNS.end();
     if (MDNS.begin(host.c_str())) {
+        if (alias != host) {
+            mdns_ip_addr_t ip = {};
+            ip.addr.type = ESP_IPADDR_TYPE_V4;
+            ip.addr.u_addr.ip4.addr = (uint32_t)WiFi.localIP();
+            mdns_delegate_hostname_add(alias.c_str(), &ip);
+        }
         MDNS.addService("http", "tcp", 80);
         // OTA, found by scripts/ota.py and the Arduino IDE. The TXT records
         // say which monitor it is and what it runs.
@@ -62,7 +75,8 @@ static void startMdns() {
         MDNS.addServiceTxt("arduino", "tcp", "name", deviceLabel(params()).c_str());
         MDNS.addServiceTxt("arduino", "tcp", "build", buildTime());
         MDNS.addService("telnet", "tcp", CONSOLE_TCP_PORT);
-        Console.printf("mDNS: reachable at http://%s.local\n", host.c_str());
+        Console.printf("mDNS: reachable at http://%s.local%s%s%s\n", host.c_str(),
+            alias != host ? " (and http://" : "", alias != host ? alias.c_str() : "", alias != host ? ".local)" : "");
     } else {
         Console.println("mDNS: failed to start");
     }
@@ -116,7 +130,6 @@ static void onConnected(const char* how) {
     Console.printf("WiFi: %s %s (%d dBm), IP %s\n", how, WiFi.SSID().c_str(), (int)WiFi.RSSI(),
         WiFi.localIP().toString().c_str());
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-    MDNS.end();
     startMdns();  // (re)bind the responder to the new connection
     if (apActive) {  // back on a network: the setup AP is no longer needed
         WiFi.softAPdisconnect(true);
@@ -169,6 +182,10 @@ void wifiLoop() {
 
 bool wifiConnected() {
     return WiFi.status() == WL_CONNECTED;
+}
+
+void wifiNameChanged() {
+    if (wifiConnected()) startMdns();
 }
 
 bool timeSynced() {

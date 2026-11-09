@@ -91,7 +91,10 @@ Climate climateRead() {
     c.temp = bme.readTemperature();
     c.hum = bme.readHumidity();
     c.pres = bme.readPressure() / 100.0f;
-    c.ok = !isnan(c.temp) && !isnan(c.hum) && !isnan(c.pres);
+    // Outside the BME280's specified range means corrupted reads (a loose or
+    // shorted wire): 179 C / -129 hPa was seen after a rewire. Treat as no reading.
+    c.ok = c.temp > -40 && c.temp < 85 && c.hum >= 0 && c.hum <= 100 && c.pres > 300 && c.pres < 1100;
+    if (!c.ok) found = false;  // re-initialize on the next read
     return c;
 }
 

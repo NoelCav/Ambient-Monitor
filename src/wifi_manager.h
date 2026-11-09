@@ -10,6 +10,9 @@ void wifiSetup();
 void wifiLoop();
 bool wifiConnected();
 
+// Re-announce on mDNS after `set name` (the .local address follows the name).
+void wifiNameChanged();
+
 // True once NTP has set the clock (epoch times before that are meaningless).
 bool timeSynced();
 

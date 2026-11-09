@@ -34,8 +34,10 @@ static const char* const HELP =
     "  test on | test off        test mode: dust sensor stays on, live values every 5 s.\n"
     "                            'off': it sleeps until 45 s before each sample.\n"
     "  set sample <seconds>      sample interval, 1-86400.  e.g.  set sample 30\n"
-    "  set name <name>           display name, e.g. the room (set name Bedroom). Renaming\n"
-    "                            keeps the history: data is keyed by the device ID.\n"
+    "  set name <name>           display name, e.g. the room (set name Bedroom); also the\n"
+    "                            .local address (bedroom.local; the device ID's name\n"
+    "                            keeps working). Renaming keeps the history: data is\n"
+    "                            keyed by the device ID.\n"
     "\n"
     "WIFI (up to 5 saved networks; the strongest one in range is used)\n"
     "  wifi                      saved networks and the current connection\n"
@@ -333,6 +335,7 @@ void commandRun(const String& raw) {
         p.name = arg.substring(0, 32);
         p.name.trim();
         paramsSave(p);
+        wifiNameChanged();
         Console.printf("name: %s (device ID %s)\n", deviceLabel(params()).c_str(), params().deviceId.c_str());
     } else if (cmd == "set" && sub == "sample") {
         long s = arg.toInt();
