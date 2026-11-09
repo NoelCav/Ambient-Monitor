@@ -82,9 +82,22 @@ Climate climateRead() {
     Climate c;
     Guard g(mtx);
     if (!found && !initSensor()) return c;
-    uint8_t raw[3] = {0};
-    if (!bme.takeForcedMeasurement() || readRegs(0xFA, raw, 3) ||
-        (raw[0] == 0x80 && raw[1] == 0 && raw[2] == 0)) {
+    // Raw data 0xF7-0xFE: pressure (20 bit), temperature (20 bit), humidity
+    // (16 bit). A measurement that didn't run reads its "skipped" value
+    // (0x80000 / 0x80000 / 0x8000), which the library still converts into a
+    // plausible number (e.g. ~82 % RH). After a power glitch the chip resets
+    // ctrl_hum, so humidity silently stops while T and P keep working:
+    // re-initializing writes the settings back.
+    uint8_t r[8] = {0};
+    bool skipped = false;
+    if (bme.takeForcedMeasurement() && !readRegs(0xF7, r, 8)) {
+        skipped = (r[0] == 0x80 && r[1] == 0 && (r[2] >> 4) == 0) ||  // pressure
+                  (r[3] == 0x80 && r[4] == 0 && (r[5] >> 4) == 0) ||  // temperature
+                  (r[6] == 0x80 && r[7] == 0);                        // humidity
+    } else {
+        skipped = true;
+    }
+    if (skipped) {
         found = false;  // re-initialize on the next read
         return c;
     }
