@@ -12,6 +12,14 @@ Current prototype: ESP32-S3 DevKitC-1 clone (N16R8) on a breadboard, powered ove
 | 4 | **Solder BME280 #2** | Press-fit, loses contact. Needed for the second monitor. | With monitor #2 |
 | 5 | **Permanent build** (see below) | A breadboard's contacts loosen over time; the BME #1 GND joint already cracked once. | Soon |
 
+## Done
+
+- **Photoresistor divider 10 kOhm -> 2 kOhm** (2026-11-08). With 10 kOhm the reading maxed out with a lamp on across the room. Measured with 2 kOhm: room lit by lamp + overhead raw ~940 (23 %), on the desk under the lamp 2,224 (54 %, about 90x more light still to go), pressed against the bulb 4,095 (maxed). Every realistic indoor condition fits. 4 kOhm was considered: it would put the desk lamp at ~72 % but max out at ~28x the lamp's light, so 2 kOhm stays.
+
+## Lessons
+
+- **Secure the 3.3 V rail.** On 2026-11-08 the jumper from 3.3 V to the breadboard's + rail fell out while swapping a resistor. The BME280 (on that rail) then read garbage (179 °C, -129 hPa) and, after power came back, a stuck 82.7 % humidity; the light reading was off too. The firmware now rejects both, but a soldered build (below) removes the cause.
+
 ## Moving off the breadboard (no custom PCB)
 
 1. **Solder onto a breadboard-layout protoboard** (ElectroCookie "solderable breadboard" or Adafruit Perma-Proto, full size, ~6.8 x 2 in). Its holes connect in the same rows and power rails as the breadboard, so the current layout transfers one-to-one. Put the ESP32 in two 22-pin female headers so it can be swapped. Give each sensor male header pins on the board and connect it with a female-female Dupont cable, so any sensor unplugs. Use 22 AWG solid-core wire (colour-coded: red 5 V, orange 3.3 V, black GND), laid flat with a little slack, never taut. Check 5 V / 3.3 V / GND for shorts with a multimeter before powering up.
