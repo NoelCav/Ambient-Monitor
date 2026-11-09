@@ -69,7 +69,7 @@ COMPONENT CONNECTIONS DETAILED
    3.3V Power Rail ---> [ Photoresistor ] ---> [ Node ] ---> ESP32 GPIO 6
                                                  |
                                                  v
-                                          [ 10kΩ Resistor ]
+                                          [ 2kΩ Resistor ]  
                                                  |
                                                  v
                                            Ground Rail (-)
@@ -80,6 +80,6 @@ BREADBOARD POWER BUS DISTRIBUTION (The Rails)
    5.0V Rail (+) <=== ESP32 [5V]   <--- Powers: PMS5003
    3.3V Rail (Y) <=== ESP32 [3V3]  <--- Powers: BME280, KY-037, Photoresistor
    Ground Rail(-)<=== ESP32 [GND]  <--- Connects ALL sensor GND lines
-                                        & the base of the 10kΩ resistor
+                                        & the base of the 2kΩ resistor 
 ===================================================================
 ```

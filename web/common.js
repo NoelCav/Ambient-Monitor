@@ -64,7 +64,8 @@ function lightQ(lx){return [band([[10,'Dark'],[50,'Dim'],[200,'Indoor lighting']
 // Approximate lux from the raw photoresistor reading (lightLux() in
 // lib/ambient/light.h); r10 is the monitor's calibration (`light cal`).
 var SAT=4090,R10_DEFAULT=15000;
-function lux(raw,r10){var v=Math.max(raw,1)*3.1/4095,ohm=10000*(3.3-v)/v;return 10*Math.pow((r10||R10_DEFAULT)/ohm,1/0.6)}
+var LDR_FIXED_OHMS=2000;  // the divider's fixed resistor (LDR_FIXED_OHMS in light.h)
+function lux(raw,r10){var v=Math.max(raw,1)*3.1/4095,ohm=LDR_FIXED_OHMS*(3.3-v)/v;return 10*Math.pow((r10||R10_DEFAULT)/ohm,1/0.6)}
 // ALT-CF3 indoor PM2.5 from a log row's particle counts (pm25AltCf3() in
 // lib/ambient/air_quality.h): computed rather than logged, to save log space.
 function est(r){var n1=Math.max(0,r.cnt_0_3-r.cnt_0_5),n2=Math.max(0,r.cnt_0_5-r.cnt_1_0),n3=Math.max(0,r.cnt_1_0-r.cnt_2_5);
