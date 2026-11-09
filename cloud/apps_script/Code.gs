@@ -164,3 +164,23 @@ function rollup() {
   while (old < all.length && all[old][iEpoch] < cutoff) old++;
   if (old) raw.deleteRows(2, old);
 }
+
+/**
+ * Maintenance, run by hand from the editor (select it, then Run): delete
+ * columns the monitors no longer log, from both tabs. Columns are otherwise
+ * never removed, so old rows keep lining up. Edit DROP for future removals.
+ */
+function removeColumns() {
+  const DROP = ['pm1_0_cf1', 'pm10_cf1'];  // dropped from the log 2026-11-08: no published use
+  [READINGS, HOURLY].forEach(name => {
+    const sh = sheet_(name);
+    if (!sh.getLastColumn()) return;
+    const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    for (let i = head.length - 1; i >= 0; i--) {  // right to left, so indexes stay valid
+      if (DROP.indexOf(head[i]) >= 0) {
+        sh.deleteColumn(i + 1);
+        Logger.log('%s: removed %s', name, head[i]);
+      }
+    }
+  });
+}

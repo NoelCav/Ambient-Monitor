@@ -18,7 +18,7 @@ static const char* const ARCHIVE_PREFIX = "archive-";
 static const char* const HEADER =
     "epoch,uptime_s,boot,reset,device_id,"
     "temp_c,humidity_pct,pressure_hpa,"
-    "pm1_0,pm2_5,pm10,pm1_0_cf1,pm2_5_cf1,pm10_cf1,pms_awake_s,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
+    "pm1_0,pm2_5,pm10,pm2_5_cf1,pms_awake_s,cnt_0_3,cnt_0_5,cnt_1_0,cnt_2_5,cnt_5_0,cnt_10,"
     "sound_avg_rms,sound_peak_rms,light\n";
 
 static bool mounted = false;
@@ -200,11 +200,13 @@ void dataLogAppend(const Reading& r) {
     if (r.climate.ok) {
         snprintf(env, sizeof(env), "%.2f,%.1f,%.1f", r.climate.temp, r.climate.hum, r.climate.pres);
     }
-    char pm[128] = ",,,,,,,,,,,,";
+    // pm2_5_cf1 is the input to the EPA PurpleAir correction; PM1/PM10 CF=1
+    // have no published use, so they aren't logged.
+    char pm[128] = ",,,,,,,,,,";
     if (r.dustOk) {
         const PmsFrame& d = r.dust;
-        snprintf(pm, sizeof(pm), "%u,%u,%u,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u",
-            d.pm[0], d.pm[1], d.pm[2], d.cf1[0], d.cf1[1], d.cf1[2], (unsigned long)r.dustAwakeS,
+        snprintf(pm, sizeof(pm), "%u,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u",
+            d.pm[0], d.pm[1], d.pm[2], d.cf1[1], (unsigned long)r.dustAwakeS,
             d.cnt[0], d.cnt[1], d.cnt[2], d.cnt[3], d.cnt[4], d.cnt[5]);
     }
 
