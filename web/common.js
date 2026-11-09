@@ -82,7 +82,7 @@ function readings(r,dustMsg){
  t+=u.ok?tile('PM2.5 est. (raw '+u.pm[1]+')',Math.round(u.est),UG,pmQ(PM25,u.est))+tile('PM1.0',u.pm[0],UG,pmQ(PM25,u.pm[0]))+tile('PM10',u.pm[2],UG,pmQ(PM10,u.pm[2]))
   :none(['PM2.5','PM1.0','PM10'],dustMsg);
  t+=tile('Sound avg',r.sound.avg.toFixed(1),'',sndQ(r.sound.avg))+tile('Sound peak',r.sound.peak.toFixed(1),'',sndQ(r.sound.peak))+
-  tile('Light',(r.light>=SAT?'≥':'')+Math.round(r.lux),'lux',r.light>=SAT?['Sensor maxed out',lightQ(r.lux)[1],1]:lightQ(r.lux));
+  tile('Light (raw '+Math.round(r.light)+')',(r.light>=SAT?'≥':'')+Math.round(r.lux),'lux',r.light>=SAT?['Sensor maxed out',lightQ(r.lux)[1],1]:lightQ(r.lux));
  return grid(t)}
 // The same Reading shape from a log row (CSV column names, as on the device
 // and in the Sheet). Empty columns mean that sensor had no reading.
