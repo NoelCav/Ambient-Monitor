@@ -51,7 +51,9 @@ static const char* const HELP =
     "  log tail [n]              print the last n rows (default 10).  e.g.  log tail 5\n"
     "  log save <name> [range]   copy rows to saved/<name>.csv to keep an event.\n"
     "                            range: omitted = whole log | N = last N rows |\n"
-    "                                   Nm / Nh = rows from the last N minutes / hours\n"
+    "                                   Nm / Nh = rows from the last N minutes / hours |\n"
+    "                                   since <epoch> = rows from that time on (the\n"
+    "                                   portal turns a clock time into an epoch)\n"
     "                            e.g.  log save garage-sweep 20\n"
     "                                  log save overnight 8h\n"
     "                            name: letters, digits, - and _ (spaces become -)\n"
@@ -238,34 +240,11 @@ static void cmdLog(const String& sub, const String& arg) {
         // arg = "<name> [range]"
         int sp = arg.indexOf(' ');
         String name = sp < 0 ? arg : arg.substring(0, sp);
-        String range = sp < 0 ? "" : arg.substring(sp + 1);
-        range.trim();
-        range.toLowerCase();
-        size_t lastRows = 0;
-        long sinceEpoch = 0;
+        LogRange r;
         String err;
-        if (!name.length()) {
-            Console.println("usage: log save <name> [N | Nm | Nh]   (see help)");
-            return;
-        }
-        if (range.length() && range != "all") {
-            char unit = range[range.length() - 1];
-            long n = range.toInt();
-            if (n <= 0) {
-                Console.println("range must be N rows, Nm or Nh (e.g. 20, 30m, 2h)");
-                return;
-            }
-            if (unit == 'm' || unit == 'h') {
-                if (!timeSynced()) {
-                    Console.println("clock not synced yet; use a row count instead (e.g. log save x 20)");
-                    return;
-                }
-                sinceEpoch = (long)time(nullptr) - n * (unit == 'h' ? 3600L : 60L);
-            } else {
-                lastRows = n;
-            }
-        }
-        if (!dataLogSave(name, lastRows, sinceEpoch, err)) Console.printf("log save failed: %s\n", err.c_str());
+        if (!name.length()) Console.println("usage: log save <name> [range]   (see help)");
+        else if (!dataLogParseRange(sp < 0 ? "" : arg.substring(sp + 1), r, err)) Console.println(err);
+        else if (!dataLogSave(name, r, err)) Console.printf("log save failed: %s\n", err.c_str());
     } else if (sub == "list") {
         DataLogStats s = dataLogStats();
         Console.printf("  log.csv                         %6u KB (current)\n", (unsigned)(s.bytes / 1024));

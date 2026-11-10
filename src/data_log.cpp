@@ -242,10 +242,61 @@ String dataLogSavedPath(const String& name) {
     return String(DATA_LOG_SAVED_DIR) + "/" + name + ".csv";
 }
 
-// Copy log.csv (header always included) to saved/<name>.csv. lastRows > 0
-// keeps only the last N rows; sinceEpoch > 0 keeps only rows stamped at or
-// after that time (rows without a clock time are skipped). Both 0 = whole log.
-bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String& err) {
+bool dataLogParseRange(String text, LogRange& r, String& err) {
+    r = LogRange();
+    text.trim();
+    text.toLowerCase();
+    if (!text.length() || text == "all") return true;
+    if (text.startsWith("since ")) {
+        r.sinceEpoch = text.substring(6).toInt();
+        if (r.sinceEpoch <= 0) { err = "since needs an epoch time (the portal converts a clock time)"; return false; }
+        return true;
+    }
+    long n = text.toInt();
+    char unit = text[text.length() - 1];
+    if (n <= 0) { err = "range must be N rows, Nm, Nh or since <epoch> (e.g. 20, 30m, 2h)"; return false; }
+    if (unit == 'm' || unit == 'h') {
+        if (!timeSynced()) { err = "clock not synced yet; use a row count instead (e.g. 20)"; return false; }
+        r.sinceEpoch = (long)time(nullptr) - n * (unit == 'h' ? 3600L : 60L);
+    } else {
+        r.lastRows = n;
+    }
+    return true;
+}
+
+// Walk log.csv's data rows that `r` selects, writing each to `out` if given.
+// Mutex held by the caller. False only on a write error.
+static bool forRange(const LogRange& r, File* out, LogSpan& span, size_t& bytes) {
+    File in = LittleFS.open(DATA_LOG_PATH, FILE_READ);
+    if (!in) return true;
+    size_t skip = r.lastRows && rows > r.lastRows ? rows - r.lastRows : 0;
+    bool ok = true;
+    String line = in.readStringUntil('\n');  // header
+    if (out) { ok = out->print(line + "\n") > 0; bytes += line.length() + 1; }
+    while (ok && in.available()) {
+        line = in.readStringUntil('\n');
+        if (!line.length()) continue;
+        if (skip) { skip--; continue; }
+        long epoch = line.toInt();  // epoch is the first column; "" -> 0
+        if (r.sinceEpoch && epoch < r.sinceEpoch) continue;
+        if (!span.rows) span.first = epoch;
+        if (epoch) span.last = epoch;
+        span.rows++;
+        if (out) { ok = out->print(line + "\n") == line.length() + 1; bytes += line.length() + 1; }
+    }
+    in.close();
+    return ok;
+}
+
+LogSpan dataLogPreview(const LogRange& r) {
+    Guard g(mtx);
+    LogSpan span;
+    size_t bytes = 0;
+    if (mounted) forRange(r, nullptr, span, bytes);
+    return span;
+}
+
+bool dataLogSave(const String& rawName, const LogRange& r, String& err) {
     Guard g(mtx);
     if (!mounted) { err = "log storage not mounted"; return false; }
     String name = dataLogSanitizeName(rawName);
@@ -253,7 +304,7 @@ bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String
     String dst = dataLogSavedPath(name);
     if (LittleFS.exists(dst)) { err = "'" + name + "' already exists (log rm " + name + " first)"; return false; }
 
-    bool whole = lastRows == 0 && sinceEpoch == 0;
+    bool whole = r.lastRows == 0 && r.sinceEpoch == 0;
     size_t need = whole ? fileSize(DATA_LOG_PATH) : 0;  // subsets are small; write errors are caught below
     size_t free = LittleFS.totalBytes() - LittleFS.usedBytes();
     if (need + SAVE_HEADROOM > free) {
@@ -262,37 +313,19 @@ bool dataLogSave(const String& rawName, size_t lastRows, long sinceEpoch, String
         return false;
     }
 
-    size_t skip = 0;
-    if (lastRows) skip = rows > lastRows ? rows - lastRows : 0;
-
     LittleFS.mkdir(DATA_LOG_SAVED_DIR);
-    File in = LittleFS.open(DATA_LOG_PATH, FILE_READ);
     File out = LittleFS.open(dst, FILE_WRITE);
-    if (!in || !out) { err = "could not open files"; return false; }
-
-    size_t kept = 0;
+    if (!out) { err = "could not open files"; return false; }
+    LogSpan span;
     size_t bytes = 0;  // File::size() reads 0 until close on LittleFS, so count here
-    bool ok = true;
-    String line = in.readStringUntil('\n');  // header
-    ok = out.print(line + "\n") > 0;
-    bytes += line.length() + 1;
-    while (ok && in.available()) {
-        line = in.readStringUntil('\n');
-        if (!line.length()) continue;
-        if (skip) { skip--; continue; }
-        if (sinceEpoch && line.toInt() < sinceEpoch) continue;  // epoch is the first column; "" -> 0
-        ok = out.print(line + "\n") == line.length() + 1;
-        bytes += line.length() + 1;
-        kept++;
-    }
-    in.close();
+    bool ok = forRange(r, &out, span, bytes);
     out.close();
     if (!ok) {
         LittleFS.remove(dst);
         err = "write failed (storage full?)";
         return false;
     }
-    Console.printf("DataLog: saved %u rows (%u bytes) as %s\n", (unsigned)kept, (unsigned)bytes, dst.c_str());
+    Console.printf("DataLog: saved %u rows (%u bytes) as %s\n", (unsigned)span.rows, (unsigned)bytes, dst.c_str());
     return true;
 }
 

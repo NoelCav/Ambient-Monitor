@@ -29,8 +29,22 @@ extern const char* const DATA_LOG_PATH;
 extern const char* const DATA_LOG_SAVED_DIR;
 String dataLogSanitizeName(const String& name);   // [a-z0-9_-], max 31; "" if unusable
 String dataLogSavedPath(const String& name);      // "/saved/<name>.csv"
-// Copy log.csv (or the last N rows / rows since an epoch time) to saved/<name>.csv.
-bool dataLogSave(const String& name, size_t lastRows, long sinceEpoch, String& err);
+// Which rows of log.csv to take: all (both 0), the last N rows, or rows stamped
+// at or after an epoch time (rows without a clock time are then skipped).
+struct LogRange {
+    size_t lastRows = 0;
+    long sinceEpoch = 0;
+};
+// Parse "" / "all" | N (rows) | Nm / Nh (last N minutes / hours) | "since <epoch>".
+bool dataLogParseRange(String text, LogRange& r, String& err);
+// What a range selects: row count and the first / last row's epoch (0 if none).
+struct LogSpan {
+    size_t rows = 0;
+    long first = 0, last = 0;
+};
+LogSpan dataLogPreview(const LogRange& r);
+// Copy the selected rows (header always included) to saved/<name>.csv.
+bool dataLogSave(const String& name, const LogRange& r, String& err);
 bool dataLogRemoveSaved(const String& name);
 bool dataLogRenameSaved(const String& from, const String& to, String& err);
 void dataLogForEachSaved(void (*fn)(const String& name, size_t bytes, void* ctx), void* ctx);

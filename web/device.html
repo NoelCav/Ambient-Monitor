@@ -58,7 +58,12 @@ pre{background:var(--pre);border:1px solid var(--line);border-radius:6px;padding
 <label>Sample every (seconds)</label>
 <input type="number" id="ssec" min="1" max="86400" value="%SAMPLE%">
 <button type="submit" class="pri">Save</button></form><div class="msg hide" id="smsg"></div>
-<div class="muted">Device ID <b>%DEVICE%</b> (permanent: it keys this monitor's data, so renaming keeps the history). Address: the name's .local (also %DEVICE%.local).</div></div>
+<div class="muted">Device ID <b>%DEVICE%</b> (permanent: it keys this monitor's data, so renaming keeps the history). Address: the name's .local (also %DEVICE%.local).</div>
+<h3>Firmware update</h3><form onsubmit="fwUpload();return false">
+<label>Firmware file <span class="muted">(.pio/build/esp32s3/firmware.bin)</span></label><input type="file" id="fwfile" accept=".bin">
+<label>Update password <span class="muted">(OTA password)</span></label><input type="password" id="fwpw" autocomplete="current-password">
+<button type="submit" class="pri" id="fwbtn">Upload</button></form><div class="msg hide" id="fwmsg"></div>
+<div class="muted">Current build %BUILD%. A new build that isn't healthy within a minute rolls back to this one.</div></div>
 
 <script>
 // Device portal. Shared helpers, tiles, colour scales and charts are in
@@ -148,6 +153,13 @@ function wifiAdd(){var s=$('wssid').value.trim(),p=$('wpass').value;
 // Device settings: applied at once through the console commands.
 function saveDevice(){cmd('set name '+$('sname2').value.trim()).then(function(){return cmd('set sample '+$('ssec').value)})
  .then(function(x){msg('smsg','Saved.');tick()})}
+// Firmware upload: XHR for the progress; the monitor reboots once it is written.
+function fwUpload(){var f=$('fwfile').files[0];if(!f){msg('fwmsg','Choose a firmware file first.');return}
+ var fd=new FormData(),x=new XMLHttpRequest();fd.append('firmware',f);$('fwbtn').disabled=true;
+ x.upload.onprogress=function(e){if(e.lengthComputable)msg('fwmsg','Uploading… '+Math.round(e.loaded*100/e.total)+'%')};
+ x.onload=function(){msg('fwmsg',x.responseText);$('fwbtn').disabled=false};
+ x.onerror=function(){msg('fwmsg','Upload failed: connection lost.');$('fwbtn').disabled=false};
+ x.open('POST','/update?pw='+encodeURIComponent($('fwpw').value));x.send(fd)}
 function wifiRm(s){if(!confirm('Remove '+s+'?'))return;cmd('wifi rm "'+s+'"').then(function(x){msg('wmsg',x);wifi()})}
 // Data log: the current log on top, then saved logs (user saves and automatic
 // archives of full logs), each a box with its actions.
@@ -159,11 +171,14 @@ function logs(){return fetch('/logs.json').then(function(r){return r.json()}).th
   tile('Log fills in',last?dur(j.rows_left*last.sys.sample_s):'–','',[last?'then archived below':'',null]));
  var t='<div class="lb"><div class="lh"><b>Current log</b><span class="muted">'+j.rows+(j.rows==1?' row · ':' rows · ')+j.live_kb+' KB</span></div><div class="lbt">'+
   '<a class="b" href="/log.csv">&#8595; Download</a>'+btn('&#43; Save copy','showSave()')+btn('&#9776; Graph',"graphOf('')")+btn('&#10005; Clear','clearLog()','del')+
-  '</div><form id="savef" class="hide" onsubmit="saveLog();return false"><div class="line" style="margin-top:10px">'+
-  '<input type="text" id="sname" placeholder="name, e.g. garage-sweep" autocomplete="off">'+
-  '<select id="srange" style="width:auto"><option value="">All rows</option><option value="20">Last 20 rows</option>'+
-  '<option value="100">Last 100 rows</option><option value="30m">Last 30 min</option><option value="1h">Last hour</option>'+
-  '<option value="8h">Last 8 hours</option><option value="24h">Last 24 hours</option></select></div>'+
+  '</div><form id="savef" class="hide" onsubmit="saveLog();return false">'+
+  '<label>Name <span class="muted">(optional)</span></label><input type="text" id="sname" autocomplete="off">'+
+  '<label>Rows</label><div class="line"><select id="srange" style="width:auto;flex:none" onchange="rangeUi()"><option value="">All rows</option>'+
+  '<option value="n">Last N rows</option><option value="m">Last N minutes</option><option value="h">Last N hours</option>'+
+  '<option value="since">Since a time</option></select>'+
+  '<input type="number" id="sn" class="hide" min="1" value="20" oninput="rangePrev()">'+
+  '<input type="time" id="stime" class="hide" value="01:00" oninput="rangePrev()"></div>'+
+  '<div class="muted" id="sprev" style="margin-top:6px"></div>'+
   '<button type="submit" class="pri">Save</button></form></div>';
  var sv=j.saved.slice().sort(function(a,b){return a.name<b.name?1:-1});
  t+='<h3>Saved logs <span style="font-weight:400">('+sv.length+' · '+j.free_kb+' KB free)</span></h3>';
@@ -178,10 +193,24 @@ function logs(){return fetch('/logs.json').then(function(r){return r.json()}).th
 // Automatic archives carry the reason in their name: archive-<reason>-<time>.
 function archWhy(n){var m=/^archive-([a-z]+)-/.exec(n);if(!m)return '';
  return ' · archived: '+({full:'log was full',columns:'columns changed (firmware update)',migrated:'moved from log.old.csv'}[m[1]]||'automatically')}
-function showSave(){$('savef').classList.toggle('hide');$('sname').focus()}
+function showSave(){$('savef').classList.toggle('hide');$('sname').placeholder=defName();$('sname').focus();rangePrev()}
+// Save range, in log save's syntax. "Since a time" is the most recent such
+// clock time (local), sent as an epoch because the monitor keeps UTC.
+function rangeStr(){var m=$('srange').value,n=parseInt($('sn').value)||0;
+ if(m=='since'){var t=$('stime').value.split(':'),d=new Date();d.setHours(+t[0],+t[1]||0,0,0);
+  if(d>new Date())d.setDate(d.getDate()-1);return 'since '+Math.floor(d/1000)}
+ return !m?'':m=='n'?String(n):n+m}
+function rangeUi(){var m=$('srange').value;$('sn').classList.toggle('hide',!m||m=='since');
+ $('stime').classList.toggle('hide',m!='since');rangePrev()}
+// Preview: how many rows the range takes and when the first one is from.
+function rangePrev(){fetch('/range.json?r='+encodeURIComponent(rangeStr())).then(function(r){return r.json()}).then(function(j){
+ set('sprev',j.error?j.error:!j.rows?'No rows in that range.':
+  j.rows+(j.rows==1?' row':' rows')+', from '+(j.first?tfmt(j.first):'a row without a clock time')+(j.last&&j.rows>1?' to '+tfmt(j.last):''))})}
 function showRen(n){$('ren-'+n).classList.toggle('hide')}
-function saveLog(){var n=$('sname').value.trim(),r=$('srange').value;
- if(!n){msg('lmsg','Enter a name first.');return}
+// Default save name: copy-<local date and time>, e.g. copy-2026-11-09-0812.
+function defName(){var d=new Date(),p=function(x){return (x<10?'0':'')+x};
+ return 'copy-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())}
+function saveLog(){var n=$('sname').value.trim()||defName(),r=rangeStr();
  cmd('log save '+n+(r?' '+r:'')).then(function(x){msg('lmsg',x);logs()})}
 function renLog(n){var to=$('rn-'+n).value.trim();if(!to||to==n)return;
  cmd('log mv '+n+' '+to).then(function(x){msg('lmsg',x||'Renamed.');logs()})}

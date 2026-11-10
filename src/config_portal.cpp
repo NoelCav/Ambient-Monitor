@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <LittleFS.h>
+#include <Update.h>
 
 static WebServer server(80);
 
@@ -105,6 +106,57 @@ static void handleSavedDownload() {
     sendCsv(dataLogSavedPath(name), name);
 }
 
+// What a save range would select, for the Save copy form's preview:
+// /range.json?r=<range> (same syntax as `log save`) -> {rows, first, last}.
+static void handleRangeJson() {
+    LogRange r;
+    String err;
+    if (!dataLogParseRange(server.arg("r"), r, err)) {
+        server.send(200, "application/json", "{\"error\":" + jsonStr(err) + "}");
+        return;
+    }
+    LogSpan s = dataLogPreview(r);
+    server.send(200, "application/json", "{\"rows\":" + String(s.rows) + ",\"first\":" + String(s.first) +
+        ",\"last\":" + String(s.last) + "}");
+}
+
+// Firmware upload from the portal: POST /update?pw=<OTA password> with the
+// .bin as multipart file. Same as an ArduinoOTA update: the new build boots
+// on trial and rolls back if it isn't healthy (health.cpp). The request blocks
+// loop() while the file streams in, so the loop task leaves the watchdog.
+static String updateErr;
+
+static void handleUpdateUpload() {
+    HTTPUpload& u = server.upload();
+    if (u.status == UPLOAD_FILE_START) {
+        disableLoopWDT();  // re-enabled at END / ABORTED, which always follow
+        updateErr = "";
+        if (server.arg("pw") != OTA_PASSWORD) updateErr = "wrong password";
+        else if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) updateErr = Update.errorString();
+        else Console.printf("Update: receiving %s\n", u.filename.c_str());
+    } else if (u.status == UPLOAD_FILE_WRITE) {
+        if (!updateErr.length() && Update.write(u.buf, u.currentSize) != u.currentSize) updateErr = Update.errorString();
+    } else if (u.status == UPLOAD_FILE_END) {
+        if (!updateErr.length() && !Update.end(true)) updateErr = Update.errorString();
+        enableLoopWDT();
+    } else if (u.status == UPLOAD_FILE_ABORTED) {
+        if (!updateErr.length()) updateErr = "upload interrupted";
+        enableLoopWDT();
+    }
+}
+
+static void handleUpdateDone() {
+    if (updateErr.length() || !Update.isFinished()) {
+        if (Update.isRunning()) Update.abort();
+        String e = updateErr.length() ? updateErr : String("no file received");
+        Console.printf("Update failed: %s\n", e.c_str());
+        server.send(updateErr == "wrong password" ? 403 : 400, "text/plain", "Update failed: " + e);
+        return;
+    }
+    server.send(200, "text/plain", "Update written. Rebooting into the new build; it rolls back if it isn't healthy within a minute.");
+    commandRun("reboot");
+}
+
 void configPortalSetup() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status.json", HTTP_GET, handleStatus);
@@ -124,6 +176,8 @@ void configPortalSetup() {
     server.on("/logs.json", HTTP_GET, handleLogsJson);
     server.on("/wifi.json", HTTP_GET, handleWifiJson);
     server.on("/saved.csv", HTTP_GET, handleSavedDownload);
+    server.on("/range.json", HTTP_GET, handleRangeJson);
+    server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
     server.onNotFound(handleRoot);  // simple captive-portal-style fallback
     server.begin();
     Console.println("Config portal: HTTP server started on port 80");
