@@ -8,7 +8,7 @@
 // resistance falls with light as R = R10 * (lux / 10)^-gamma, where R10 is its
 // resistance at 10 lux. GL5528-type parts: R10 10-20 kOhm, gamma ~0.6. Without
 // a calibration (`light cal <lux>`) this is only an order-of-magnitude figure.
-// The portal's graph JS (lux() in config_portal.cpp) uses the same formula.
+// The portal's graph JS (lux() in web/common.js) uses the same formula.
 
 static const float LDR_FIXED_OHMS = 2000;  // keep in step with lux() in web/common.js
 static const float LDR_GAMMA = 0.6f;

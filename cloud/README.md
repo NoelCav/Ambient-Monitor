@@ -1,8 +1,8 @@
 # cloud/: the Google Sheet data store
 
-Monitors upload their log rows to a Google Sheet through a small Apps Script web app (`apps_script/Code.gs`). The dashboard (`dashboard/`, served by GitHub Pages) reads them back from the same web app. It's free, has no expiry, and the data stays in your own Google Drive.
+Monitors upload their log rows to a Google Sheet through a small Apps Script web app (`apps_script/Code.gs`). The dashboard (`web/`, served by GitHub Pages) reads them back from the same web app. It's free, has no expiry, and the data stays in your own Google Drive.
 
-## One-time setup (about 5 minutes)
+## Setup (done once; step 6 for each new monitor)
 
 1. **Create the Sheet.** In Google Drive: New → Google Sheets. Name it e.g. "Ambient Monitor".
 2. **Add the script.** In the Sheet: Extensions → Apps Script. Replace the editor's contents with `apps_script/Code.gs` and save.
@@ -22,7 +22,7 @@ Monitors upload their log rows to a Google Sheet through a small Apps Script web
    upload
    ```
    `upload` shows the status; within a minute or so the rows from `log.csv` appear in the `readings` tab. Device details in the portal shows the upload state too.
-7. **Point the dashboard at it:** put the same URL in `dashboard/config.js`.
+7. **Point the dashboard at it:** put the same URL in `web/config.js`.
 
 ## The dashboard
 

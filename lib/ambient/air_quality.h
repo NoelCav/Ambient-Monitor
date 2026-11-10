@@ -8,7 +8,7 @@
 // sensor reports cumulative ">x" counts, hence the differences. The raw
 // atmospheric PM2.5 stays the logged trend value; this is the health estimate.
 // Not logged (the counts are): the portal's graphs recompute it in JavaScript
-// (est() in config_portal.cpp), so keep the two in step.
+// (est() in web/common.js), so keep the two in step.
 inline float pm25AltCf3(const PmsFrame& f) {
     auto bin = [&f](int i) { return f.cnt[i] > f.cnt[i + 1] ? (float)(f.cnt[i] - f.cnt[i + 1]) : 0.0f; };
     return 3.0f * (0.00030418f * bin(0) + 0.0018512f * bin(1) + 0.02069706f * bin(2));
@@ -17,7 +17,7 @@ inline float pm25AltCf3(const PmsFrame& f) {
 // US EPA AQI band upper limits (2024): good, moderate, unhealthy for
 // sensitive groups, unhealthy, very unhealthy; above the last is hazardous.
 // Used by the console words (levels.h) and the LED; the portal JS has its own
-// copy (PM25 / PM10 in config_portal.cpp).
+// copy (PM25 / PM10 in web/common.js).
 static const float PM25_LIMITS[5] = {9, 35.4f, 55.4f, 125.4f, 225.4f};
 static const float PM10_LIMITS[5] = {54, 154, 254, 354, 424};
 

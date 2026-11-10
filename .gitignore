@@ -84,3 +84,6 @@ secrets.ini
 # Generated at build time by scripts/build_info.py and scripts/embed_web.py
 src/build_info.h
 src/web_assets.h
+
+# Python bytecode
+__pycache__/

@@ -3,5 +3,12 @@
     "commit": "",
     "pr": "",
     "sessionUrl": false
+  },
+  "permissions": {
+    "deny": [
+      "Read(src/web_assets.h)",
+      "Read(src/build_info.h)",
+      "Read(.pio/**)"
+    ]
   }
 }

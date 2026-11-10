@@ -4,7 +4,7 @@
 
 // Plain-language levels for the console. The portal shows the same words with
 // colours from the same thresholds (tempQ/humQ/presQ/pmQ/sndQ/lightQ in
-// config_portal.cpp): keep the two in step.
+// web/common.js): keep the two in step.
 
 struct Band {
     float max;         // the level applies up to and including this value
